@@ -1,7 +1,7 @@
 package main
 
 import (
-	"dazn/envizaMon/tpi"
+	"dazn/envisaMon/tpi"
 	"flag"
 	"fmt"
 	"io"
@@ -17,7 +17,7 @@ import (
 
 func main() {
 	// 1. Parse command-line arguments and flags
-	ipAddress, port, printMessages, printAppLog := parseArgs()
+	ipAddress, port, printMessages, printAppLog, deduplicate := parseArgs()
 
 	// 2. Read password from environment
 	password := os.Getenv("ENVISALINK_TPI_KEY")
@@ -35,6 +35,7 @@ func main() {
 		password,
 		tpiLogger,
 		appLogger,
+		deduplicate,
 	)
 
 	// 5. Set up signal handling for graceful shutdown
@@ -67,15 +68,17 @@ func main() {
 	}
 }
 
-func parseArgs() (string, int, bool, bool) {
+func parseArgs() (string, int, bool, bool, bool) {
 	printMessages := flag.Bool("m", false, "print TPI messages to stdout")
 	printAppLog := flag.Bool("l", false, "print application log to stdout")
+	deduplicate := flag.Bool("u", false, "deduplicate consecutive identical TPI messages")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] <ip-address> [port]\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "\nOptions:\n")
 		fmt.Fprintf(os.Stderr, "  -m    print TPI messages to stdout (in addition to log file)\n")
 		fmt.Fprintf(os.Stderr, "  -l    print application log to stdout (in addition to log file)\n")
+		fmt.Fprintf(os.Stderr, "  -u    deduplicate consecutive identical TPI messages\n")
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  %s 192.168.1.100              # Uses default port 4025\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s 192.168.1.100 2222         # Uses custom port 2222\n", os.Args[0])
@@ -106,7 +109,7 @@ func parseArgs() (string, int, bool, bool) {
 		}
 	}
 
-	return ipAddress, port, *printMessages, *printAppLog
+	return ipAddress, port, *printMessages, *printAppLog, *deduplicate
 }
 
 func setupLogging(printMessages, printAppLog bool) (*log.Logger, *log.Logger) {

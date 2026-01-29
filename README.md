@@ -34,6 +34,7 @@ export ENVISALINK_TPI_KEY="your_password"
 
 *   `-m`: Print raw TPI messages to standard output (stdout) in addition to the log file.
 *   `-l`: Print application operational logs to standard output (stdout) in addition to the log file.
+*   `-u`: Deduplicate consecutive identical TPI messages.
 
 ### Examples
 

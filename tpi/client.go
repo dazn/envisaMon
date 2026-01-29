@@ -25,10 +25,12 @@ type Client struct {
 	appLogger      *log.Logger
 	stopCh         chan struct{}
 	reconnectDelay time.Duration
+	deduplicate    bool
+	lastMessage    string
 }
 
 // NewClient creates a new TPI client
-func NewClient(address, password string, tpiLogger, appLogger *log.Logger) *Client {
+func NewClient(address, password string, tpiLogger, appLogger *log.Logger, deduplicate bool) *Client {
 	return &Client{
 		address:        address,
 		password:       password,
@@ -36,6 +38,8 @@ func NewClient(address, password string, tpiLogger, appLogger *log.Logger) *Clie
 		appLogger:      appLogger,
 		stopCh:         make(chan struct{}),
 		reconnectDelay: initialDelay,
+		deduplicate:    deduplicate,
+		lastMessage:    "",
 	}
 }
 
@@ -126,8 +130,15 @@ func (c *Client) ReadLoop() error {
 
 	for scanner.Scan() {
 		line := scanner.Text()
+
+		// Apply deduplication if enabled
+		if c.deduplicate && line == c.lastMessage {
+			continue // Skip logging this duplicate message
+		}
+
 		// Log raw line with NO timestamp, NO prefix
 		c.tpiLogger.Println(line)
+		c.lastMessage = line
 	}
 
 	// Check for errors
