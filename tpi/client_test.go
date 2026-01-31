@@ -301,3 +301,95 @@ func TestClient_ReadLoop_LastMessageTracking(t *testing.T) {
 		t.Errorf("logged %d messages, want %d", len(loggedMessages), len(expectedMessages))
 	}
 }
+
+func TestClient_authenticate(t *testing.T) {
+	tests := []struct {
+		name         string
+		password     string
+		serverRead   string // Data the server "sends" to the client
+		wantWrite    string // Data the client should send to the server
+		wantErrType  string
+		wantAuthFail bool
+	}{
+		{
+			name:       "successful authentication",
+			password:   "testpass",
+			serverRead: "Login:\r\nOK\r\n",
+			wantWrite:  "testpass\r",
+		},
+		{
+			name:         "incorrect password",
+			password:     "wrong",
+			serverRead:   "Login:\r\nFAILED\r\n",
+			wantWrite:    "wrong\r",
+			wantErrType:  "AuthError",
+			wantAuthFail: true,
+		},
+		{
+			name:        "unexpected prompt",
+			password:    "testpass",
+			serverRead:  "Welcome to EnvisaLink\r\n",
+			wantErrType: "AuthError",
+		},
+		{
+			name:        "read error on login prompt",
+			password:    "testpass",
+			serverRead:  "", // EOF
+			wantErrType: "TimeoutError",
+		},
+		{
+			name:        "unexpected response format",
+			password:    "testpass",
+			serverRead:  "Login:\r\nUNKNOWN_STATUS\r\n",
+			wantWrite:   "testpass\r",
+			wantErrType: "AuthError",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, tpiLogger := newTestLogger()
+			_, appLogger := newTestLogger()
+
+			client := NewClient(
+				"127.0.0.1:4025",
+				tt.password,
+				tpiLogger,
+				appLogger,
+				false,
+			)
+
+			mock := newMockConn(tt.serverRead)
+			client.conn = mock
+
+			err := client.authenticate()
+
+			// Verify error behavior
+			if tt.wantErrType != "" {
+				if err == nil {
+					t.Fatalf("authenticate() expected error type %s, got nil", tt.wantErrType)
+				}
+				switch tt.wantErrType {
+				case "AuthError":
+					if _, ok := err.(*AuthError); !ok {
+						t.Errorf("error type = %T, want *AuthError", err)
+					}
+				case "TimeoutError":
+					if _, ok := err.(*TimeoutError); !ok {
+						t.Errorf("error type = %T, want *TimeoutError", err)
+					}
+				}
+			} else if err != nil {
+				t.Fatalf("authenticate() returned unexpected error: %v", err)
+			}
+
+			// Verify data written to server
+			if tt.wantWrite != "" {
+				gotWrite := mock.writeBuf.String()
+				if gotWrite != tt.wantWrite {
+					t.Errorf("wrote %q, want %q", gotWrite, tt.wantWrite)
+				}
+			}
+		})
+	}
+}
