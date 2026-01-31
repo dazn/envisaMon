@@ -3,6 +3,7 @@ package tpi
 import (
 	"io"
 	"log"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -388,6 +389,88 @@ func TestClient_authenticate(t *testing.T) {
 				gotWrite := mock.writeBuf.String()
 				if gotWrite != tt.wantWrite {
 					t.Errorf("wrote %q, want %q", gotWrite, tt.wantWrite)
+				}
+			}
+		})
+	}
+}
+
+func TestClient_Connect(t *testing.T) {
+	// Save original dialer and restore after test
+	originalDial := dialTimeout
+	defer func() { dialTimeout = originalDial }()
+
+	tests := []struct {
+		name        string
+		serverData  string // Data simulating server response
+		dialErr     error  // Error simulating dial failure
+		wantErrType string
+	}{
+		{
+			name:       "successful connection",
+			serverData: "Login:\r\nOK\r\n",
+		},
+		{
+			name:        "dial failure",
+			dialErr:     io.ErrUnexpectedEOF,
+			wantErrType: "ConnectionError",
+		},
+		{
+			name:        "auth failure",
+			serverData:  "Login:\r\nFAILED\r\n",
+			wantErrType: "AuthError",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, tpiLogger := newTestLogger()
+			_, appLogger := newTestLogger()
+
+			client := NewClient(
+				"127.0.0.1:4025",
+				"testpass",
+				tpiLogger,
+				appLogger,
+				false,
+			)
+
+			// Mock dialTimeout
+			dialTimeout = func(network, address string, timeout time.Duration) (net.Conn, error) {
+				if tt.dialErr != nil {
+					return nil, tt.dialErr
+				}
+				return newMockConn(tt.serverData), nil
+			}
+
+			err := client.Connect()
+
+			if tt.wantErrType != "" {
+				if err == nil {
+					t.Fatalf("Connect() expected error, got nil")
+				}
+				switch tt.wantErrType {
+				case "ConnectionError":
+					if _, ok := err.(*ConnectionError); !ok {
+						t.Errorf("error type = %T, want *ConnectionError", err)
+					}
+				case "AuthError":
+					if _, ok := err.(*AuthError); !ok {
+						t.Errorf("error type = %T, want *AuthError", err)
+					}
+				}
+			} else if err != nil {
+				t.Errorf("Connect() returned unexpected error: %v", err)
+			}
+
+			// Verify conn state
+			if err == nil {
+				if client.conn == nil {
+					t.Error("client.conn is nil after successful Connect")
+				}
+			} else {
+				if client.conn != nil {
+					t.Error("client.conn should be nil after failed Connect")
 				}
 			}
 		})

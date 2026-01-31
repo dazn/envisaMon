@@ -16,6 +16,9 @@ const (
 	authTimeout  = 10 * time.Second
 )
 
+// dialTimeout is a variable to allow mocking in tests
+var dialTimeout = net.DialTimeout
+
 // Client manages the TPI connection and message handling
 type Client struct {
 	address        string
@@ -49,7 +52,7 @@ func (c *Client) Connect() error {
 
 	// Establish TCP connection
 	c.appLogger.Printf("INFO: Connecting to %s", c.address)
-	conn, err := net.DialTimeout("tcp", c.address, 10*time.Second)
+	conn, err := dialTimeout("tcp", c.address, 10*time.Second)
 	if err != nil {
 		c.appLogger.Printf("ERROR: Failed to connect: %v", err)
 		return &ConnectionError{Message: "failed to dial", Err: err}
