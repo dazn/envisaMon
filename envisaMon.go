@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
-	"time"
 
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -121,10 +120,10 @@ func setupLogging(printMessages, printAppLog bool) (*log.Logger, *log.Logger) {
 
 	// TPI message logger (raw messages only, NO PREFIX/TIMESTAMP)
 	tpiRoller := &lumberjack.Logger{
-		Filename: "./logs/tpi-messages.log",
-		MaxSize:  100, // megabytes
-		MaxAge:   90,  // days
-		Compress: true,
+		Filename:   "./logs/tpi-messages.log",
+		MaxSize:    5, // megabytes
+		MaxBackups: 3, // keep only the 3 most recent log files
+		Compress:   true,
 	}
 
 	var tpiWriter io.Writer = tpiRoller
@@ -135,10 +134,10 @@ func setupLogging(printMessages, printAppLog bool) (*log.Logger, *log.Logger) {
 
 	// Application event logger
 	appRoller := &lumberjack.Logger{
-		Filename: "./logs/application.log",
-		MaxSize:  100, // megabytes
-		MaxAge:   90,  // days
-		Compress: true,
+		Filename:   "./logs/application.log",
+		MaxSize:    5, // megabytes
+		MaxBackups: 3, // keep only the 3 most recent log files
+		Compress:   true,
 	}
 
 	var appWriter io.Writer = appRoller
@@ -146,24 +145,6 @@ func setupLogging(printMessages, printAppLog bool) (*log.Logger, *log.Logger) {
 		appWriter = io.MultiWriter(appRoller, os.Stdout)
 	}
 	appLogger := log.New(appWriter, "", log.LstdFlags)
-
-	// Start daily rotation goroutine
-	go func() {
-		for {
-			now := time.Now()
-			next := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
-			time.Sleep(time.Until(next))
-
-			appLogger.Println("INFO: Rotating logs...")
-			if err := tpiRoller.Rotate(); err != nil {
-				appLogger.Printf("ERROR: Failed to rotate TPI log: %v", err)
-			}
-
-			if err := appRoller.Rotate(); err != nil {
-				appLogger.Printf("ERROR: Failed to rotate application log: %v", err)
-			}
-		}
-	}()
 
 	return tpiLogger, appLogger
 }

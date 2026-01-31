@@ -60,12 +60,12 @@ The application maintains two distinct log files in the `./logs` directory. Thes
 ### 1. TPI Messages Log (`logs/tpi-messages.log`)
 Contains the raw, unprocessed ASCII data received from the EnvisaLink module.
 *   **Format:** Raw message text only (no added timestamps or prefixes).
-*   **Rotation:** Rotates daily (at midnight) or when reaching 100MB. Retains logs for 90 days.
+*   **Rotation:** Rotates when reaching 5MB. Retains the 3 most recent log files.
 
 ### 2. Application Log (`logs/application.log`)
 Contains operational events such as connection attempts, authentication status, and errors.
 *   **Format:** Standard log format with date and time (e.g., `2026/01/27 10:00:00 INFO: Connected...`).
-*   **Rotation:** Rotates daily (at midnight) or when reaching 100MB. Retains logs for 90 days.
+*   **Rotation:** Rotates when reaching 5MB. Retains the 3 most recent log files.
 
 ## Message Structure
 
