@@ -1,4 +1,4 @@
-module dazn/envisaMon
+module envisaMon
 
 go 1.22.2
 

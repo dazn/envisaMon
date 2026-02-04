@@ -1,7 +1,7 @@
 package main
 
 import (
-	"dazn/envisaMon/tpi"
+	"envisaMon/tpi"
 	"flag"
 	"fmt"
 	"io"

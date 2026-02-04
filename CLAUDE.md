@@ -36,6 +36,9 @@ go test ./...
 # Run tests for specific package
 go test ./tpi
 
+# Run specific test function
+go test ./tpi -run TestConnect
+
 # Run with verbose output
 go test -v ./...
 ```
@@ -65,12 +68,14 @@ go mod tidy
   - Implements exponential backoff (1s to 60s) for reconnection
   - Handles TCP connection lifecycle (Connect/ReadLoop/Close)
   - Authentication flow: reads "Login:" prompt, sends password with `\r`, validates "OK"/"FAILED" response
-  - Message deduplication option to filter consecutive identical messages
+  - Message deduplication option (enabled with `-u` flag) filters consecutive identical messages to reduce log volume
   - Uses separate loggers for TPI messages (raw, no timestamp) vs application events
+  - Exposes `dialTimeout` variable for mocking in tests
 - `errors.go`: Custom error types for error handling semantics
   - `AuthError`: Fatal authentication failures (no retry)
   - `ConnectionError`: Network issues (retry with backoff)
   - `TimeoutError`: Read/write timeouts (retry with backoff)
+- `testutil_test.go`: Mock TCP server utilities for testing TPI protocol interactions
 
 ### Key Design Patterns
 
@@ -82,6 +87,9 @@ The main loop in `envisaMon.go:54-68` continuously calls `Connect()` and `ReadLo
 
 **Authentication Flow:**
 The TPI protocol requires reading a "Login:" prompt, responding with password followed by `\r` (carriage return), then validating the response is "OK". Auth timeout is set to 10 seconds during this phase, then cleared for ongoing message reading.
+
+**Testing Pattern:**
+Tests use table-driven approach and mock TCP connections via `testutil_test.go`. The `dialTimeout` variable in `client.go` is reassigned during tests to inject mock connections. Tests verify the exact protocol sequence including login prompts, authentication responses, and message handling.
 
 ## Workflow
 - Do not use git commands (commits, etc.) unless explicitly requested
