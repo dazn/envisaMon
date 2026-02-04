@@ -22,6 +22,12 @@ type Event struct {
 	SystemID      string `json:"system_id"`
 }
 
+// reportedMessage wraps a log message with its arrival timestamp
+type reportedMessage struct {
+	content   string
+	timestamp int64
+}
+
 // AsyncReporter implements io.Writer to intercept logs and send them to a remote API
 type AsyncReporter struct {
 	url            string
@@ -30,7 +36,7 @@ type AsyncReporter struct {
 	messageType    string
 	stripTimestamp bool
 	client         *http.Client
-	msgChan        chan string
+	msgChan        chan reportedMessage
 	errorWriter    io.Writer // Writer to log internal errors (e.g., file writer)
 }
 
@@ -53,41 +59,44 @@ func NewAsyncReporter(url, systemID, messageType string, stripTimestamp bool, er
 		messageType:    messageType,
 		stripTimestamp: stripTimestamp,
 		client: &http.Client{
-			Timeout:   10 * time.Second,
+			Timeout:   200 * time.Second,
 			Transport: tr,
 		},
-		msgChan:     make(chan string, 100), // Buffer to avoid blocking main thread
+		msgChan:     make(chan reportedMessage, 500), // Buffer to avoid blocking main thread
 		errorWriter: errorWriter,
 	}
 
-	go ar.worker()
+	for i := 0; i < 4; i++ {
+		go ar.worker()
+	}
 	return ar
 }
 
 // Write implements io.Writer. It parses the log line and queues it for sending.
 func (ar *AsyncReporter) Write(p []byte) (n int, err error) {
 	msg := string(p)
-	
+	ts := time.Now().Unix()
+
 	// Queue the message non-blocking (drop if full to avoid halting application)
 	select {
-	case ar.msgChan <- msg:
+	case ar.msgChan <- reportedMessage{content: msg, timestamp: ts}:
 	default:
 		// Channel full, drop message or log error to errorWriter
 		fmt.Fprintf(ar.errorWriter, "AsyncReporter channel full, dropping message: %s", msg)
 	}
-	
+
 	return len(p), nil
 }
 
 func (ar *AsyncReporter) worker() {
-	for msg := range ar.msgChan {
-		ar.report(msg)
+	for rm := range ar.msgChan {
+		ar.report(rm)
 	}
 }
 
-func (ar *AsyncReporter) report(rawMsg string) {
+func (ar *AsyncReporter) report(rm reportedMessage) {
 	// Prepare message
-	cleanMsg := rawMsg
+	cleanMsg := rm.content
 	if ar.stripTimestamp {
 		// Expecting "2009/01/23 01:23:23 msg..."
 		// 19 chars for date/time + 1 space = 20 chars
@@ -100,7 +109,7 @@ func (ar *AsyncReporter) report(rawMsg string) {
 	// Create payload
 	event := Event{
 		EventID:       newUUID(),
-		EventUnixTime: fmt.Sprintf("%d", time.Now().Unix()),
+		EventUnixTime: fmt.Sprintf("%d", rm.timestamp),
 		EventMessage:  cleanMsg,
 		MessageType:   ar.messageType,
 		SystemID:      ar.systemID,
