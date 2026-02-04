@@ -10,7 +10,11 @@ EnvisaMon is a Go application that connects to an EnvisaLink module via the Thir
 
 ### Building
 ```bash
+# Local build
 go build -o envisaMon
+
+# Cross-compile for MIPS Big Endian, Soft Float
+GOOS=linux GOARCH=mips GOMIPS=softfloat go build -ldflags="-s -w" -o build/envisaMon-linux-mips-softfloat .
 ```
 
 ### Running
@@ -19,13 +23,13 @@ go build -o envisaMon
 export ENVISALINK_TPI_KEY="your_password"
 
 # Run with default port (4025)
-./envisaMon 192.168.1.50
+./envisaMon 192.168.1.50 https://your-endpoint.com/restPath
 
 # Run with custom port
-./envisaMon 192.168.1.50 4026
+./envisaMon 192.168.1.50:4026 https://your-endpoint.com/restPath
 
 # Debug mode (logs to stdout)
-./envisaMon -m -l 192.168.1.50
+./envisaMon -m -l 192.168.1.50 https://your-endpoint.com/restPath
 ```
 
 ### Testing
@@ -51,8 +55,6 @@ go mod download
 # Update dependencies
 go mod tidy
 ```
-
-## Architecture
 
 ### Core Components
 

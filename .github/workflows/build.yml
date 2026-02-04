@@ -1,0 +1,98 @@
+name: Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Run tests
+        run: go test -v ./...
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            name: envisaMon-linux-amd64
+          - os: linux
+            arch: arm64
+            name: envisaMon-linux-arm64
+          - os: darwin
+            arch: arm64
+            name: envisaMon-darwin-arm64
+          - os: linux
+            arch: mips
+            gomips: softfloat
+            name: envisaMon-linux-mips-softfloat
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          GOMIPS: ${{ matrix.gomips }}
+          CGO_ENABLED: 0
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          
+          # Build binary with simple name 'envisaMon'
+          go build -v -ldflags="-s -w" -o build/envisaMon .
+          
+          # Create compressed archive
+          cd build
+          tar -czf ${{ matrix.name }}.tar.gz envisaMon
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: build/${{ matrix.name }}.tar.gz
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
