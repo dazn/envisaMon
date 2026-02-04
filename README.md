@@ -77,7 +77,7 @@ The reporting API expects a JSON object with the following structure:
 ```json
 {
   "event_id": "uuid-string",
-  "event_unixtime": "1678886400",
+  "event_unixtime": "1678886400.123456",
   "event_message": "The log message content",
   "message_type": "TPI" | "Application",
   "system_id": "192.168.1.50:4025"
