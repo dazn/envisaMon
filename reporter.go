@@ -34,8 +34,13 @@ type AsyncReporter struct {
 	errorWriter    io.Writer // Writer to log internal errors (e.g., file writer)
 }
 
-// NewAsyncReporter creates a new reporter
+// NewAsyncReporter creates a new reporter. Returns nil if url or ALARM_MON_API_KEY is empty.
 func NewAsyncReporter(url, systemID, messageType string, stripTimestamp bool, errorWriter io.Writer) *AsyncReporter {
+	apiKey := os.Getenv("ALARM_MON_API_KEY")
+	if url == "" || apiKey == "" {
+		return nil
+	}
+
 	// Configure transport to skip SSL verification for self-signed certificates
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
@@ -43,7 +48,7 @@ func NewAsyncReporter(url, systemID, messageType string, stripTimestamp bool, er
 
 	ar := &AsyncReporter{
 		url:            url,
-		apiKey:         os.Getenv("ALARM_MON_API_KEY"),
+		apiKey:         apiKey,
 		systemID:       systemID,
 		messageType:    messageType,
 		stripTimestamp: stripTimestamp,
@@ -53,10 +58,6 @@ func NewAsyncReporter(url, systemID, messageType string, stripTimestamp bool, er
 		},
 		msgChan:     make(chan string, 100), // Buffer to avoid blocking main thread
 		errorWriter: errorWriter,
-	}
-
-	if ar.apiKey == "" {
-		fmt.Fprintln(errorWriter, "WARN: ALARM_MON_API_KEY environment variable not set, requests may fail auth")
 	}
 
 	go ar.worker()

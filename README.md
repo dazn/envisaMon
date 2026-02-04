@@ -22,13 +22,13 @@ export ENVISALINK_TPI_KEY="your_password"
 ## Usage
 
 ```bash
-./envisaMon [options] <ip-address>[:port] <url>
+./envisaMon [options] <ip-address>[:port] [<url>]
 ```
 
 ### Arguments
 
 *   `<ip-address>[:port]`: **(Required)** The IP address of the EnvisaLink module. Optionally include the port (e.g., `192.168.1.50:4026`). Defaults to port `4025` if omitted.
-*   `<url>`: **(Required)** The destination HTTPS URL for reporting events (e.g., `https://events.example.com/api/ingest`).
+*   `<url>`: **(Optional)** The destination HTTPS URL for reporting events (e.g., `https://events.example.com/api/ingest`). Remote reporting is only active if this URL is provided and the `ALARM_MON_API_KEY` environment variable is set.
 
 ### Options
 
@@ -37,6 +37,11 @@ export ENVISALINK_TPI_KEY="your_password"
 *   `-u`: Deduplicate consecutive identical TPI messages.
 
 ### Examples
+
+Connect and log locally only:
+```bash
+./envisaMon 192.168.1.50
+```
 
 Connect to default port 4025 and report to an API:
 ```bash
@@ -53,9 +58,9 @@ Connect, see logs in console, and report:
 ./envisaMon -m -l 192.168.1.50 https://api.myserver.com/events
 ```
 
-## REST API Reporting
+## REST API Reporting (Optional)
 
-EnvisaMon reports all TPI messages and application events to the specified REST API endpoint via HTTPS POST requests.
+EnvisaMon can report all TPI messages and application events to a REST API endpoint via HTTPS POST requests. This feature is enabled only if both a destination URL is provided on the command line and the `ALARM_MON_API_KEY` is set.
 
 ### Authentication
 

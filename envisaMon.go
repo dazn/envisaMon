@@ -87,15 +87,16 @@ func parseArgs() *Config {
 	flag.BoolVar(&config.Deduplicate, "u", false, "deduplicate consecutive identical TPI messages")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [options] <ip>[:port] <url>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s [options] <ip>[:port] [<url>]\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "\nArguments:\n")
 		fmt.Fprintf(os.Stderr, "  <ip>[:port]    EnvisaLink IP address, optionally with port (default: 4025)\n")
-		fmt.Fprintf(os.Stderr, "  <url>          Event destination URL in format https://host[:port][/path/to/endpoint]\n")
+		fmt.Fprintf(os.Stderr, "  [<url>]        Optional: Event destination URL in format https://host[:port][/path/to/endpoint]\n")
 		fmt.Fprintf(os.Stderr, "\nOptions:\n")
 		fmt.Fprintf(os.Stderr, "  -m    print TPI messages to stdout (in addition to log file)\n")
 		fmt.Fprintf(os.Stderr, "  -l    print application log to stdout (in addition to log file)\n")
 		fmt.Fprintf(os.Stderr, "  -u    deduplicate consecutive identical TPI messages\n")
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
+		fmt.Fprintf(os.Stderr, "  %s 192.168.1.100\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s 192.168.1.100 https://events.example.com:8080\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s 192.168.1.100:4026 https://events.example.com/webhook\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -m -l 192.168.1.100:4026 https://events.example.com:8080/api/events\n", os.Args[0])
@@ -103,8 +104,8 @@ func parseArgs() *Config {
 
 	flag.Parse()
 
-	if flag.NArg() != 2 {
-		fmt.Fprintf(os.Stderr, "ERROR: Expected exactly 2 arguments, got %d\n", flag.NArg())
+	if flag.NArg() < 1 || flag.NArg() > 2 {
+		fmt.Fprintf(os.Stderr, "ERROR: Expected 1 or 2 arguments, got %d\n", flag.NArg())
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -131,43 +132,45 @@ func parseArgs() *Config {
 		config.EnvisaLinkIP = ipPortArg
 	}
 
-	// Parse second argument: URL in format https://host:port/path
-	urlArg := flag.Arg(1)
-	config.DestinationURL = urlArg
-	parsedURL, err := url.Parse(urlArg)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Invalid URL format: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Validate URL scheme
-	if parsedURL.Scheme != "https" {
-		fmt.Fprintf(os.Stderr, "ERROR: URL scheme must be 'https', got: '%s'\n", parsedURL.Scheme)
-		os.Exit(1)
-	}
-
-	// Validate URL host is present
-	if parsedURL.Host == "" {
-		fmt.Fprintf(os.Stderr, "ERROR: URL must include a host\n")
-		os.Exit(1)
-	}
-
-	// Validate URL port if present
-	urlPort := parsedURL.Port()
-	if urlPort != "" {
-		urlPortNum, err := strconv.Atoi(urlPort)
+	// Parse second argument if present: URL in format https://host:port/path
+	if flag.NArg() == 2 {
+		urlArg := flag.Arg(1)
+		config.DestinationURL = urlArg
+		parsedURL, err := url.Parse(urlArg)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Invalid port in URL: %s\n", urlPort)
+			fmt.Fprintf(os.Stderr, "ERROR: Invalid URL format: %v\n", err)
 			os.Exit(1)
 		}
-		if urlPortNum < 1 || urlPortNum > 65535 {
-			fmt.Fprintf(os.Stderr, "ERROR: URL port must be between 1 and 65535, got: %d\n", urlPortNum)
-			os.Exit(1)
-		}
-	}
 
-	// Extract the URL path (empty string if not present)
-	config.DestinationPath = parsedURL.Path
+		// Validate URL scheme
+		if parsedURL.Scheme != "https" {
+			fmt.Fprintf(os.Stderr, "ERROR: URL scheme must be 'https', got: '%s'\n", parsedURL.Scheme)
+			os.Exit(1)
+		}
+
+		// Validate URL host is present
+		if parsedURL.Host == "" {
+			fmt.Fprintf(os.Stderr, "ERROR: URL must include a host\n")
+			os.Exit(1)
+		}
+
+		// Validate URL port if present
+		urlPort := parsedURL.Port()
+		if urlPort != "" {
+			urlPortNum, err := strconv.Atoi(urlPort)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: Invalid port in URL: %s\n", urlPort)
+				os.Exit(1)
+			}
+			if urlPortNum < 1 || urlPortNum > 65535 {
+				fmt.Fprintf(os.Stderr, "ERROR: URL port must be between 1 and 65535, got: %d\n", urlPortNum)
+				os.Exit(1)
+			}
+		}
+
+		// Extract the URL path (empty string if not present)
+		config.DestinationPath = parsedURL.Path
+	}
 
 	return config
 }
@@ -204,14 +207,20 @@ func setupLogging(config *Config) (*log.Logger, *log.Logger) {
 	}
 
 	// Remote Reporters
-	// Note: We use appRoller as the error writer for reporters to avoid infinite loops if we used appLogger
-	tpiReporter := NewAsyncReporter(config.DestinationURL, systemID, "TPI", false, appRoller)
-	appReporter := NewAsyncReporter(config.DestinationURL, systemID, "Application", true, appRoller)
+	// Only enabled if URL is provided and ALARM_MON_API_KEY is set
+	var tpiReporter, appReporter *AsyncReporter
+	apiKey := os.Getenv("ALARM_MON_API_KEY")
+	if config.DestinationURL != "" && apiKey != "" {
+		tpiReporter = NewAsyncReporter(config.DestinationURL, systemID, "TPI", false, appRoller)
+		appReporter = NewAsyncReporter(config.DestinationURL, systemID, "Application", true, appRoller)
+	}
 
 	// TPI Writer Construction
 	var tpiWriters []io.Writer
 	tpiWriters = append(tpiWriters, tpiRoller)
-	tpiWriters = append(tpiWriters, tpiReporter)
+	if tpiReporter != nil {
+		tpiWriters = append(tpiWriters, tpiReporter)
+	}
 
 	if config.PrintTPIMessages {
 		tpiWriters = append(tpiWriters, os.Stdout)
@@ -222,7 +231,9 @@ func setupLogging(config *Config) (*log.Logger, *log.Logger) {
 	// App Writer Construction
 	var appWriters []io.Writer
 	appWriters = append(appWriters, appRoller)
-	appWriters = append(appWriters, appReporter)
+	if appReporter != nil {
+		appWriters = append(appWriters, appReporter)
+	}
 
 	if config.PrintAppLog {
 		appWriters = append(appWriters, os.Stdout)
