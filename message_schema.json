@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "EnvisaMon Event",
+  "description": "Payload for the EnvisaMon REST API",
+  "type": "object",
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "description": "A unique UUID v4 identifier for the event."
+    },
+    "event_unixtime": {
+      "type": "string",
+      "description": "The Unix timestamp when the event occurred, represented as a string."
+    },
+    "event_message": {
+      "type": "string",
+      "description": "The cleaned log message or event description."
+    },
+    "message_type": {
+      "type": "string",
+      "description": "The type or category of the message (e.g., TPI, LOG)."
+    },
+    "system_id": {
+      "type": "string",
+      "description": "Identifier for the alarm system or monitoring instance."
+    }
+  },
+  "required": [
+    "event_id",
+    "event_unixtime",
+    "event_message",
+    "message_type",
+    "system_id"
+  ]
+}
