@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -16,7 +18,7 @@ import (
 
 func main() {
 	// 1. Parse command-line arguments and flags
-	ipAddress, port, printMessages, printAppLog, deduplicate := parseArgs()
+	config := parseArgs()
 
 	// 2. Read password from environment
 	password := os.Getenv("ENVISALINK_TPI_KEY")
@@ -26,15 +28,16 @@ func main() {
 	}
 
 	// 3. Set up dual logging with lumberjack
-	tpiLogger, appLogger := setupLogging(printMessages, printAppLog)
+	tpiLogger, appLogger := setupLogging(config)
+	appLogger.Printf("DEBUG: Parsed URL from arg: %s (path: %s)", config.DestinationURL, config.DestinationPath)
 
 	// 4. Create TPI client
 	client := tpi.NewClient(
-		fmt.Sprintf("%s:%d", ipAddress, port),
+		fmt.Sprintf("%s:%d", config.EnvisaLinkIP, config.EnvisaLinkPort),
 		password,
 		tpiLogger,
 		appLogger,
-		deduplicate,
+		config.Deduplicate,
 	)
 
 	// 5. Set up signal handling for graceful shutdown
@@ -49,7 +52,7 @@ func main() {
 	}()
 
 	// 6. Main monitoring loop with auto-reconnect
-	appLogger.Printf("INFO: Starting TPI monitor for %s", ipAddress)
+	appLogger.Printf("INFO: Starting TPI monitor for %s", config.EnvisaLinkIP)
 	for {
 		err := client.Connect()
 		if err != nil {
@@ -67,51 +70,109 @@ func main() {
 	}
 }
 
-func parseArgs() (string, int, bool, bool, bool) {
-	printMessages := flag.Bool("m", false, "print TPI messages to stdout")
-	printAppLog := flag.Bool("l", false, "print application log to stdout")
-	deduplicate := flag.Bool("u", false, "deduplicate consecutive identical TPI messages")
+type Config struct {
+	EnvisaLinkIP     string
+	EnvisaLinkPort   int
+	DestinationURL   string
+	DestinationPath  string
+	PrintTPIMessages bool
+	PrintAppLog      bool
+	Deduplicate      bool
+}
+
+func parseArgs() *Config {
+	config := &Config{}
+	flag.BoolVar(&config.PrintTPIMessages, "m", false, "print TPI messages to stdout")
+	flag.BoolVar(&config.PrintAppLog, "l", false, "print application log to stdout")
+	flag.BoolVar(&config.Deduplicate, "u", false, "deduplicate consecutive identical TPI messages")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [options] <ip-address> [port]\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s [options] <ip>[:port] <url>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "\nArguments:\n")
+		fmt.Fprintf(os.Stderr, "  <ip>[:port]    EnvisaLink IP address, optionally with port (default: 4025)\n")
+		fmt.Fprintf(os.Stderr, "  <url>          Event destination URL in format https://host[:port][/path/to/endpoint]\n")
 		fmt.Fprintf(os.Stderr, "\nOptions:\n")
 		fmt.Fprintf(os.Stderr, "  -m    print TPI messages to stdout (in addition to log file)\n")
 		fmt.Fprintf(os.Stderr, "  -l    print application log to stdout (in addition to log file)\n")
 		fmt.Fprintf(os.Stderr, "  -u    deduplicate consecutive identical TPI messages\n")
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
-		fmt.Fprintf(os.Stderr, "  %s 192.168.1.100              # Uses default port 4025\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s 192.168.1.100 2222         # Uses custom port 2222\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -m -l 192.168.1.100 2222   # With logging options\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s 192.168.1.100 https://events.example.com:8080\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s 192.168.1.100:4026 https://events.example.com/webhook\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -m -l 192.168.1.100:4026 https://events.example.com:8080/api/events\n", os.Args[0])
 	}
 
 	flag.Parse()
 
-	if flag.NArg() < 1 {
+	if flag.NArg() != 2 {
+		fmt.Fprintf(os.Stderr, "ERROR: Expected exactly 2 arguments, got %d\n", flag.NArg())
 		flag.Usage()
 		os.Exit(1)
 	}
 
-	ipAddress := flag.Arg(0)
-	port := 4025 // default port
+	// Parse first argument: <ip>[:port]
+	ipPortArg := flag.Arg(0)
+	config.EnvisaLinkPort = 4025 // default port
 
-	// Parse optional port argument
-	if flag.NArg() >= 2 {
+	if strings.Contains(ipPortArg, ":") {
+		parts := strings.SplitN(ipPortArg, ":", 2)
+		config.EnvisaLinkIP = parts[0]
+
 		var err error
-		port, err = strconv.Atoi(flag.Arg(1))
+		config.EnvisaLinkPort, err = strconv.Atoi(parts[1])
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Invalid port number: %s\n", flag.Arg(1))
+			fmt.Fprintf(os.Stderr, "ERROR: Invalid port number in '%s': %s\n", ipPortArg, parts[1])
 			os.Exit(1)
 		}
-		if port < 1 || port > 65535 {
-			fmt.Fprintf(os.Stderr, "ERROR: Port must be between 1 and 65535, got: %d\n", port)
+		if config.EnvisaLinkPort < 1 || config.EnvisaLinkPort > 65535 {
+			fmt.Fprintf(os.Stderr, "ERROR: Port must be between 1 and 65535, got: %d\n", config.EnvisaLinkPort)
+			os.Exit(1)
+		}
+	} else {
+		config.EnvisaLinkIP = ipPortArg
+	}
+
+	// Parse second argument: URL in format https://host:port/path
+	urlArg := flag.Arg(1)
+	config.DestinationURL = urlArg
+	parsedURL, err := url.Parse(urlArg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Invalid URL format: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Validate URL scheme
+	if parsedURL.Scheme != "https" {
+		fmt.Fprintf(os.Stderr, "ERROR: URL scheme must be 'https', got: '%s'\n", parsedURL.Scheme)
+		os.Exit(1)
+	}
+
+	// Validate URL host is present
+	if parsedURL.Host == "" {
+		fmt.Fprintf(os.Stderr, "ERROR: URL must include a host\n")
+		os.Exit(1)
+	}
+
+	// Validate URL port if present
+	urlPort := parsedURL.Port()
+	if urlPort != "" {
+		urlPortNum, err := strconv.Atoi(urlPort)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: Invalid port in URL: %s\n", urlPort)
+			os.Exit(1)
+		}
+		if urlPortNum < 1 || urlPortNum > 65535 {
+			fmt.Fprintf(os.Stderr, "ERROR: URL port must be between 1 and 65535, got: %d\n", urlPortNum)
 			os.Exit(1)
 		}
 	}
 
-	return ipAddress, port, *printMessages, *printAppLog, *deduplicate
+	// Extract the URL path (empty string if not present)
+	config.DestinationPath = parsedURL.Path
+
+	return config
 }
 
-func setupLogging(printMessages, printAppLog bool) (*log.Logger, *log.Logger) {
+func setupLogging(config *Config) (*log.Logger, *log.Logger) {
 	// Ensure logs directory exists
 	if err := os.MkdirAll("./logs", 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to create logs directory: %v\n", err)
@@ -126,12 +187,6 @@ func setupLogging(printMessages, printAppLog bool) (*log.Logger, *log.Logger) {
 		Compress:   true,
 	}
 
-	var tpiWriter io.Writer = tpiRoller
-	if printMessages {
-		tpiWriter = io.MultiWriter(tpiRoller, os.Stdout)
-	}
-	tpiLogger := log.New(tpiWriter, "", 0) // flags=0 means NO timestamp, NO prefix
-
 	// Application event logger
 	appRoller := &lumberjack.Logger{
 		Filename:   "./logs/application.log",
@@ -140,10 +195,39 @@ func setupLogging(printMessages, printAppLog bool) (*log.Logger, *log.Logger) {
 		Compress:   true,
 	}
 
-	var appWriter io.Writer = appRoller
-	if printAppLog {
-		appWriter = io.MultiWriter(appRoller, os.Stdout)
+	// Prepare SystemID
+	systemID := config.EnvisaLinkIP
+	if config.EnvisaLinkPort != 4025 {
+		systemID = fmt.Sprintf("%s:%d", config.EnvisaLinkIP, config.EnvisaLinkPort)
+	} else {
+		systemID = fmt.Sprintf("%s:%d", config.EnvisaLinkIP, config.EnvisaLinkPort)
 	}
+
+	// Remote Reporters
+	// Note: We use appRoller as the error writer for reporters to avoid infinite loops if we used appLogger
+	tpiReporter := NewAsyncReporter(config.DestinationURL, systemID, "TPI", false, appRoller)
+	appReporter := NewAsyncReporter(config.DestinationURL, systemID, "Application", true, appRoller)
+
+	// TPI Writer Construction
+	var tpiWriters []io.Writer
+	tpiWriters = append(tpiWriters, tpiRoller)
+	tpiWriters = append(tpiWriters, tpiReporter)
+
+	if config.PrintTPIMessages {
+		tpiWriters = append(tpiWriters, os.Stdout)
+	}
+	tpiWriter := io.MultiWriter(tpiWriters...)
+	tpiLogger := log.New(tpiWriter, "", 0) // flags=0 means NO timestamp, NO prefix
+
+	// App Writer Construction
+	var appWriters []io.Writer
+	appWriters = append(appWriters, appRoller)
+	appWriters = append(appWriters, appReporter)
+
+	if config.PrintAppLog {
+		appWriters = append(appWriters, os.Stdout)
+	}
+	appWriter := io.MultiWriter(appWriters...)
 	appLogger := log.New(appWriter, "", log.LstdFlags)
 
 	return tpiLogger, appLogger

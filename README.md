@@ -22,13 +22,13 @@ export ENVISALINK_TPI_KEY="your_password"
 ## Usage
 
 ```bash
-./envisaMon [options] <ip-address> [port]
+./envisaMon [options] <ip-address>[:port] <url>
 ```
 
 ### Arguments
 
-*   `<ip-address>`: **(Required)** The IP address or hostname of the EnvisaLink module.
-*   `[port]`: **(Optional)** The TPI port. Defaults to `4025` if not specified.
+*   `<ip-address>[:port]`: **(Required)** The IP address of the EnvisaLink module. Optionally include the port (e.g., `192.168.1.50:4026`). Defaults to port `4025` if omitted.
+*   `<url>`: **(Required)** The destination HTTPS URL for reporting events (e.g., `https://events.example.com/api/ingest`).
 
 ### Options
 
@@ -38,20 +38,52 @@ export ENVISALINK_TPI_KEY="your_password"
 
 ### Examples
 
-Connect to default port 4025:
+Connect to default port 4025 and report to an API:
 ```bash
-./envisaMon 192.168.1.50
+./envisaMon 192.168.1.50 https://api.myserver.com/events
 ```
 
-Connect to a custom port:
+Connect to a custom port and report:
 ```bash
-./envisaMon 192.168.1.50 4026
+./envisaMon 192.168.1.50:4026 https://api.myserver.com/webhook
 ```
 
-Connect and see all logs in the console (useful for debugging):
+Connect, see logs in console, and report:
 ```bash
-./envisaMon -m -l 192.168.1.50
+./envisaMon -m -l 192.168.1.50 https://api.myserver.com/events
 ```
+
+## REST API Reporting
+
+EnvisaMon reports all TPI messages and application events to the specified REST API endpoint via HTTPS POST requests.
+
+### Authentication
+
+To authenticate with your REST API, set the `ALARM_MON_API_KEY` environment variable.
+
+```bash
+export ALARM_MON_API_KEY="your_api_key_here"
+```
+
+### JSON Payload
+
+The reporting API expects a JSON object with the following structure:
+
+```json
+{
+  "event_id": "uuid-string",
+  "event_unixtime": "1678886400",
+  "event_message": "The log message content",
+  "message_type": "TPI" | "Application",
+  "system_id": "192.168.1.50:4025"
+}
+```
+
+*   `event_id`: A unique UUID v4 for the event.
+*   `event_unixtime`: The Unix timestamp when the event occurred.
+*   `event_message`: The log content (timestamps are stripped from Application logs).
+*   `message_type`: Indicates the source of the log ("TPI" for raw device messages, "Application" for internal app logs).
+*   `system_id`: The configured EnvisaLink host and port.
 
 ## Logging
 
