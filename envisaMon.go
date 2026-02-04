@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/url"
 	"os"
 	"os/signal"
@@ -18,7 +19,14 @@ import (
 
 func main() {
 	// 1. Parse command-line arguments and flags
-	config := parseArgs()
+	config, err := parseArgs(os.Args[1:])
+	if err != nil {
+		if err == flag.ErrHelp {
+			os.Exit(0)
+		}
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		os.Exit(1)
+	}
 
 	// 2. Read password from environment
 	password := os.Getenv("ENVISALINK_TPI_KEY")
@@ -28,7 +36,11 @@ func main() {
 	}
 
 	// 3. Set up dual logging with lumberjack
-	tpiLogger, appLogger := setupLogging(config)
+	tpiLogger, appLogger, err := setupLogging(config)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Failed to set up logging: %v\n", err)
+		os.Exit(1)
+	}
 	appLogger.Printf("DEBUG: Parsed URL from arg: %s (path: %s)", config.DestinationURL, config.DestinationPath)
 
 	// 4. Create TPI client
@@ -80,106 +92,97 @@ type Config struct {
 	Deduplicate      bool
 }
 
-func parseArgs() *Config {
-	config := &Config{}
-	flag.BoolVar(&config.PrintTPIMessages, "m", false, "print TPI messages to stdout")
-	flag.BoolVar(&config.PrintAppLog, "l", false, "print application log to stdout")
-	flag.BoolVar(&config.Deduplicate, "u", false, "deduplicate consecutive identical TPI messages")
+func parseArgs(args []string) (*Config, error) {
+	fs := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	fs.Usage = func() {
+		out := fs.Output()
+		fmt.Fprintf(out, "Usage: %s [options] <ip>[:port] [<url>]\n", os.Args[0])
+		fmt.Fprintf(out, "\nArguments:\n")
+		fmt.Fprintf(out, "  <ip>[:port]    EnvisaLink IP address, optionally with port (default: 4025)\n")
+		fmt.Fprintf(out, "  [<url>]        Optional: Event destination URL (must be https)\n")
+		fmt.Fprintf(out, "\nOptions:\n")
+		fs.PrintDefaults()
+		fmt.Fprintf(out, "\nExamples:\n")
+		fmt.Fprintf(out, "  %s 192.168.1.100\n", os.Args[0])
+		fmt.Fprintf(out, "  %s 192.168.1.100 https://events.example.com:8080\n", os.Args[0])
+	}
+	return parseConfig(fs, args)
+}
 
-	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [options] <ip>[:port] [<url>]\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "\nArguments:\n")
-		fmt.Fprintf(os.Stderr, "  <ip>[:port]    EnvisaLink IP address, optionally with port (default: 4025)\n")
-		fmt.Fprintf(os.Stderr, "  [<url>]        Optional: Event destination URL in format https://host[:port][/path/to/endpoint]\n")
-		fmt.Fprintf(os.Stderr, "\nOptions:\n")
-		fmt.Fprintf(os.Stderr, "  -m    print TPI messages to stdout (in addition to log file)\n")
-		fmt.Fprintf(os.Stderr, "  -l    print application log to stdout (in addition to log file)\n")
-		fmt.Fprintf(os.Stderr, "  -u    deduplicate consecutive identical TPI messages\n")
-		fmt.Fprintf(os.Stderr, "\nExamples:\n")
-		fmt.Fprintf(os.Stderr, "  %s 192.168.1.100\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s 192.168.1.100 https://events.example.com:8080\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s 192.168.1.100:4026 https://events.example.com/webhook\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -m -l 192.168.1.100:4026 https://events.example.com:8080/api/events\n", os.Args[0])
+func parseConfig(fs *flag.FlagSet, args []string) (*Config, error) {
+	config := &Config{}
+	fs.BoolVar(&config.PrintTPIMessages, "m", false, "print TPI messages to stdout")
+	fs.BoolVar(&config.PrintAppLog, "l", false, "print application log to stdout")
+	fs.BoolVar(&config.Deduplicate, "u", false, "deduplicate consecutive identical TPI messages")
+
+	if err := fs.Parse(args); err != nil {
+		return nil, err
 	}
 
-	flag.Parse()
-
-	if flag.NArg() < 1 || flag.NArg() > 2 {
-		fmt.Fprintf(os.Stderr, "ERROR: Expected 1 or 2 arguments, got %d\n", flag.NArg())
-		flag.Usage()
-		os.Exit(1)
+	if fs.NArg() < 1 || fs.NArg() > 2 {
+		fs.Usage()
+		return nil, fmt.Errorf("expected 1 or 2 positional arguments, got %d", fs.NArg())
 	}
 
 	// Parse first argument: <ip>[:port]
-	ipPortArg := flag.Arg(0)
+	ipPortArg := fs.Arg(0)
 	config.EnvisaLinkPort = 4025 // default port
 
 	if strings.Contains(ipPortArg, ":") {
-		parts := strings.SplitN(ipPortArg, ":", 2)
-		config.EnvisaLinkIP = parts[0]
-
-		var err error
-		config.EnvisaLinkPort, err = strconv.Atoi(parts[1])
+		host, portStr, err := net.SplitHostPort(ipPortArg)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Invalid port number in '%s': %s\n", ipPortArg, parts[1])
-			os.Exit(1)
+			fs.Usage()
+			return nil, fmt.Errorf("invalid IP:port format '%s': %w", ipPortArg, err)
 		}
-		if config.EnvisaLinkPort < 1 || config.EnvisaLinkPort > 65535 {
-			fmt.Fprintf(os.Stderr, "ERROR: Port must be between 1 and 65535, got: %d\n", config.EnvisaLinkPort)
-			os.Exit(1)
+		config.EnvisaLinkIP = host
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			fs.Usage()
+			return nil, fmt.Errorf("invalid port number in '%s': %s", ipPortArg, portStr)
 		}
+		config.EnvisaLinkPort = port
 	} else {
 		config.EnvisaLinkIP = ipPortArg
 	}
 
+	if config.EnvisaLinkPort < 1 || config.EnvisaLinkPort > 65535 {
+		fs.Usage()
+		return nil, fmt.Errorf("port must be between 1 and 65535, got: %d", config.EnvisaLinkPort)
+	}
+
 	// Parse second argument if present: URL in format https://host:port/path
-	if flag.NArg() == 2 {
-		urlArg := flag.Arg(1)
+	if fs.NArg() == 2 {
+		urlArg := fs.Arg(1)
 		config.DestinationURL = urlArg
 		parsedURL, err := url.Parse(urlArg)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Invalid URL format: %v\n", err)
-			os.Exit(1)
+			fs.Usage()
+			return nil, fmt.Errorf("invalid URL format: %w", err)
 		}
 
 		// Validate URL scheme
 		if parsedURL.Scheme != "https" {
-			fmt.Fprintf(os.Stderr, "ERROR: URL scheme must be 'https', got: '%s'\n", parsedURL.Scheme)
-			os.Exit(1)
+			fs.Usage()
+			return nil, fmt.Errorf("URL scheme must be 'https', got: '%s'", parsedURL.Scheme)
 		}
 
 		// Validate URL host is present
 		if parsedURL.Host == "" {
-			fmt.Fprintf(os.Stderr, "ERROR: URL must include a host\n")
-			os.Exit(1)
-		}
-
-		// Validate URL port if present
-		urlPort := parsedURL.Port()
-		if urlPort != "" {
-			urlPortNum, err := strconv.Atoi(urlPort)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "ERROR: Invalid port in URL: %s\n", urlPort)
-				os.Exit(1)
-			}
-			if urlPortNum < 1 || urlPortNum > 65535 {
-				fmt.Fprintf(os.Stderr, "ERROR: URL port must be between 1 and 65535, got: %d\n", urlPortNum)
-				os.Exit(1)
-			}
+			fs.Usage()
+			return nil, fmt.Errorf("URL must include a host")
 		}
 
 		// Extract the URL path (empty string if not present)
 		config.DestinationPath = parsedURL.Path
 	}
 
-	return config
+	return config, nil
 }
 
-func setupLogging(config *Config) (*log.Logger, *log.Logger) {
+func setupLogging(config *Config) (*log.Logger, *log.Logger, error) {
 	// Ensure logs directory exists
 	if err := os.MkdirAll("./logs", 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Failed to create logs directory: %v\n", err)
-		os.Exit(1)
+		return nil, nil, fmt.Errorf("failed to create logs directory: %w", err)
 	}
 
 	// TPI message logger (raw messages only, NO PREFIX/TIMESTAMP)
@@ -199,12 +202,7 @@ func setupLogging(config *Config) (*log.Logger, *log.Logger) {
 	}
 
 	// Prepare SystemID
-	systemID := config.EnvisaLinkIP
-	if config.EnvisaLinkPort != 4025 {
-		systemID = fmt.Sprintf("%s:%d", config.EnvisaLinkIP, config.EnvisaLinkPort)
-	} else {
-		systemID = fmt.Sprintf("%s:%d", config.EnvisaLinkIP, config.EnvisaLinkPort)
-	}
+	systemID := fmt.Sprintf("%s:%d", config.EnvisaLinkIP, config.EnvisaLinkPort)
 
 	// Remote Reporters
 	// Only enabled if URL is provided and ALARM_MON_API_KEY is set
@@ -241,5 +239,5 @@ func setupLogging(config *Config) (*log.Logger, *log.Logger) {
 	appWriter := io.MultiWriter(appWriters...)
 	appLogger := log.New(appWriter, "", log.LstdFlags)
 
-	return tpiLogger, appLogger
+	return tpiLogger, appLogger, nil
 }
