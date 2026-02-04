@@ -25,7 +25,7 @@ type Event struct {
 // reportedMessage wraps a log message with its arrival timestamp
 type reportedMessage struct {
 	content   string
-	timestamp int64
+	timestamp time.Time
 }
 
 // AsyncReporter implements io.Writer to intercept logs and send them to a remote API
@@ -75,7 +75,7 @@ func NewAsyncReporter(url, systemID, messageType string, stripTimestamp bool, er
 // Write implements io.Writer. It parses the log line and queues it for sending.
 func (ar *AsyncReporter) Write(p []byte) (n int, err error) {
 	msg := string(p)
-	ts := time.Now().Unix()
+	ts := time.Now()
 
 	// Queue the message non-blocking (drop if full to avoid halting application)
 	select {
@@ -109,7 +109,7 @@ func (ar *AsyncReporter) report(rm reportedMessage) {
 	// Create payload
 	event := Event{
 		EventID:       newUUID(),
-		EventUnixTime: fmt.Sprintf("%d", rm.timestamp),
+		EventUnixTime: fmt.Sprintf("%d.%06d", rm.timestamp.Unix(), rm.timestamp.Nanosecond()/1000),
 		EventMessage:  cleanMsg,
 		MessageType:   ar.messageType,
 		SystemID:      ar.systemID,
