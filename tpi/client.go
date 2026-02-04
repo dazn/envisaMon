@@ -89,9 +89,6 @@ func (c *Client) authenticate() error {
 		return &TimeoutError{Operation: "read login prompt", Err: err}
 	}
 
-	// Log the raw login prompt
-	c.tpiLogger.Println(strings.TrimRight(loginPrompt, "\r\n"))
-
 	if !strings.Contains(loginPrompt, "Login") {
 		return &AuthError{Message: fmt.Sprintf("unexpected prompt: %s", strings.TrimSpace(loginPrompt))}
 	}
@@ -107,9 +104,6 @@ func (c *Client) authenticate() error {
 	if err != nil {
 		return &TimeoutError{Operation: "read auth response", Err: err}
 	}
-
-	// Log the raw response
-	c.tpiLogger.Println(strings.TrimRight(response, "\r\n"))
 
 	// Clear read deadline after authentication
 	if err := c.conn.SetReadDeadline(time.Time{}); err != nil {
