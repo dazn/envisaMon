@@ -1,6 +1,6 @@
 # EnvisaMon
 
-EnvisaMon is a lightweight Go application designed to connect to an EnvisaLink™ module via the Third Party Interface (TPI). It monitors the connection, handles authentication, and logs all TPI messages to disk for analysis or audit.
+EnvisaMon is a lightweight Go application designed to connect to an EnvisaLink™ module via the Third Party Interface (TPI). It monitors the connection, handles authentication, and logs all TPI messages to disk for analysis or audit. It also supports remote reporting, allowing you to forward events to a REST API for centralized monitoring or integration.
 
 ## Features
 
@@ -8,6 +8,7 @@ EnvisaMon is a lightweight Go application designed to connect to an EnvisaLink�
 - **Auto-Reconnect:** Automatically attempts to reconnect with exponential backoff if the connection is lost.
 - **Dual Logging:** Separates raw TPI protocol messages from application operational logs.
 - **Log Rotation:** Automatically manages log file sizes and retention.
+- **Remote Reporting:** Securely forwards events to a REST API via HTTPS with API key authentication.
 
 ## Prerequisites
 
