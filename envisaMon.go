@@ -49,7 +49,7 @@ func main() {
 		password,
 		tpiLogger,
 		appLogger,
-		config.Deduplicate,
+		config.DeduplicateLimit,
 	)
 
 	// 5. Set up signal handling for graceful shutdown
@@ -90,6 +90,7 @@ type Config struct {
 	PrintTPIMessages bool
 	PrintAppLog      bool
 	Deduplicate      bool
+	DeduplicateLimit int
 }
 
 func parseArgs(args []string) (*Config, error) {
@@ -104,6 +105,8 @@ func parseArgs(args []string) (*Config, error) {
 		fs.PrintDefaults()
 		fmt.Fprintf(out, "\nExamples:\n")
 		fmt.Fprintf(out, "  %s 192.168.1.100\n", os.Args[0])
+		fmt.Fprintf(out, "  %s -u 192.168.1.100\n", os.Args[0])
+		fmt.Fprintf(out, "  %s -u 100 192.168.1.100\n", os.Args[0])
 		fmt.Fprintf(out, "  %s 192.168.1.100 https://events.example.com:8080\n", os.Args[0])
 	}
 	return parseConfig(fs, args)
@@ -113,19 +116,34 @@ func parseConfig(fs *flag.FlagSet, args []string) (*Config, error) {
 	config := &Config{}
 	fs.BoolVar(&config.PrintTPIMessages, "m", false, "print TPI messages to stdout")
 	fs.BoolVar(&config.PrintAppLog, "l", false, "print application log to stdout")
-	fs.BoolVar(&config.Deduplicate, "u", false, "deduplicate consecutive identical TPI messages")
+	fs.BoolVar(&config.Deduplicate, "u", false, "deduplicate consecutive identical TPI messages. Optionally specify number of duplicates to ignore (e.g., -u 10)")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
 
-	if fs.NArg() < 1 || fs.NArg() > 2 {
+	config.DeduplicateLimit = -1 // Default: disabled
+	argOffset := 0
+
+	if config.Deduplicate {
+		config.DeduplicateLimit = 0 // Default for -u: infinite
+		// Check if the next argument is a number (deduplication limit)
+		if fs.NArg() > 0 {
+			limit, err := strconv.Atoi(fs.Arg(0))
+			if err == nil && limit >= 0 {
+				config.DeduplicateLimit = limit
+				argOffset = 1
+			}
+		}
+	}
+
+	if fs.NArg()-argOffset < 1 || fs.NArg()-argOffset > 2 {
 		fs.Usage()
-		return nil, fmt.Errorf("expected 1 or 2 positional arguments, got %d", fs.NArg())
+		return nil, fmt.Errorf("expected 1 or 2 positional arguments, got %d", fs.NArg()-argOffset)
 	}
 
 	// Parse first argument: <ip>[:port]
-	ipPortArg := fs.Arg(0)
+	ipPortArg := fs.Arg(argOffset)
 	config.EnvisaLinkPort = 4025 // default port
 
 	if strings.Contains(ipPortArg, ":") {
@@ -151,8 +169,8 @@ func parseConfig(fs *flag.FlagSet, args []string) (*Config, error) {
 	}
 
 	// Parse second argument if present: URL in format https://host:port/path
-	if fs.NArg() == 2 {
-		urlArg := fs.Arg(1)
+	if fs.NArg()-argOffset == 2 {
+		urlArg := fs.Arg(argOffset + 1)
 		config.DestinationURL = urlArg
 		parsedURL, err := url.Parse(urlArg)
 		if err != nil {
@@ -178,6 +196,7 @@ func parseConfig(fs *flag.FlagSet, args []string) (*Config, error) {
 
 	return config, nil
 }
+
 
 func setupLogging(config *Config) (*log.Logger, *log.Logger, error) {
 	// Ensure logs directory exists

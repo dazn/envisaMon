@@ -35,7 +35,7 @@ export ENVISALINK_TPI_KEY="your_password"
 
 *   `-m`: Print raw TPI messages to standard output (stdout) in addition to the log file.
 *   `-l`: Print application operational logs to standard output (stdout) in addition to the log file.
-*   `-u`: Deduplicate consecutive identical TPI messages.
+*   `-u [n]`: Deduplicate consecutive identical TPI messages. Optionally specify a number `n` to ignore only `n` duplicates before logging the next one (e.g., `-u 10` logs the first instance, ignores 10 duplicates, then logs the 11th). If `n` is omitted, all subsequent duplicates are ignored.
 
 ### Examples
 

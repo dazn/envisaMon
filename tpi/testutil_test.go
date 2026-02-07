@@ -65,12 +65,12 @@ func newTestLogger() (*bytes.Buffer, *log.Logger) {
 }
 
 // newTestClient creates a client with test defaults
-func newTestClient(deduplicate bool) *Client {
+func newTestClient(deduplicateLimit int) *Client {
 	return NewClient(
 		"192.168.1.50:4025",
 		"testpass",
 		log.New(io.Discard, "", 0),
 		log.New(io.Discard, "", 0),
-		deduplicate,
+		deduplicateLimit,
 	)
 }

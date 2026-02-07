@@ -21,28 +21,30 @@ var dialTimeout = net.DialTimeout
 
 // Client manages the TPI connection and message handling
 type Client struct {
-	address        string
-	password       string
-	conn           net.Conn
-	tpiLogger      *log.Logger
-	appLogger      *log.Logger
-	stopCh         chan struct{}
-	reconnectDelay time.Duration
-	deduplicate    bool
-	lastMessage    string
+	address          string
+	password         string
+	conn             net.Conn
+	tpiLogger        *log.Logger
+	appLogger        *log.Logger
+	stopCh           chan struct{}
+	reconnectDelay   time.Duration
+	deduplicateLimit int // -1: disabled, 0: infinite, >0: ignore n duplicates
+	deduplicateCount int
+	lastMessage      string
 }
 
 // NewClient creates a new TPI client
-func NewClient(address, password string, tpiLogger, appLogger *log.Logger, deduplicate bool) *Client {
+func NewClient(address, password string, tpiLogger, appLogger *log.Logger, deduplicateLimit int) *Client {
 	return &Client{
-		address:        address,
-		password:       password,
-		tpiLogger:      tpiLogger,
-		appLogger:      appLogger,
-		stopCh:         make(chan struct{}),
-		reconnectDelay: initialDelay,
-		deduplicate:    deduplicate,
-		lastMessage:    "",
+		address:          address,
+		password:         password,
+		tpiLogger:        tpiLogger,
+		appLogger:        appLogger,
+		stopCh:           make(chan struct{}),
+		reconnectDelay:   initialDelay,
+		deduplicateLimit: deduplicateLimit,
+		deduplicateCount: 0,
+		lastMessage:      "",
 	}
 }
 
@@ -128,14 +130,27 @@ func (c *Client) ReadLoop() error {
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		// Apply deduplication if enabled
-		if c.deduplicate && line == c.lastMessage {
-			continue // Skip logging this duplicate message
+		if line == c.lastMessage {
+			if c.deduplicateLimit == 0 {
+				// Infinite deduplication: skip all subsequent identical messages
+				continue
+			} else if c.deduplicateLimit > 0 {
+				if c.deduplicateCount < c.deduplicateLimit {
+					// Skip this duplicate but increment count
+					c.deduplicateCount++
+					continue
+				}
+				// Limit reached, we will log this one and reset count
+			}
+			// If limit is -1, we fall through and log everything
+		} else {
+			// New message, reset tracking
+			c.lastMessage = line
 		}
+		c.deduplicateCount = 0
 
 		// Log raw line with NO timestamp, NO prefix
 		c.tpiLogger.Println(line)
-		c.lastMessage = line
 	}
 
 	// Check for errors

@@ -63,14 +63,14 @@ go mod tidy
 - Handles dual logging setup with lumberjack for log rotation (logs/tpi-messages.log and logs/application.log)
 - Manages signal handling for graceful shutdown (SIGINT, SIGTERM)
 - Implements auto-reconnect loop with infinite retries
-- Command-line flag parsing for `-m` (print messages), `-l` (print app logs), `-u` (deduplicate)
+- Command-line flag parsing for `-m` (print messages), `-l` (print app logs), `-u [n]` (deduplicate with optional limit)
 
 **TPI Package (`tpi/`):**
 - `client.go`: Core TPI client with connection management
   - Implements exponential backoff (1s to 60s) for reconnection
   - Handles TCP connection lifecycle (Connect/ReadLoop/Close)
   - Authentication flow: reads "Login:" prompt, sends password with `\r`, validates "OK"/"FAILED" response
-  - Message deduplication option (enabled with `-u` flag) filters consecutive identical messages to reduce log volume
+  - Message deduplication option (enabled with `-u` flag) filters consecutive identical messages. Supports an optional limit to periodically log duplicates.
   - Uses separate loggers for TPI messages (raw, no timestamp) vs application events
   - Exposes `dialTimeout` variable for mocking in tests
 - `errors.go`: Custom error types for error handling semantics

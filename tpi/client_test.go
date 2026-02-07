@@ -11,22 +11,28 @@ import (
 
 func TestNewClient(t *testing.T) {
 	tests := []struct {
-		name        string
-		address     string
-		password    string
-		deduplicate bool
+		name             string
+		address          string
+		password         string
+		deduplicateLimit int
 	}{
 		{
-			name:        "basic client creation",
-			address:     "192.168.1.50:4025",
-			password:    "testpass",
-			deduplicate: false,
+			name:             "basic client creation",
+			address:          "192.168.1.50:4025",
+			password:         "testpass",
+			deduplicateLimit: -1,
 		},
 		{
-			name:        "client with deduplication enabled",
-			address:     "10.0.0.100:4026",
-			password:    "secret123",
-			deduplicate: true,
+			name:             "client with deduplication enabled",
+			address:          "10.0.0.100:4026",
+			password:         "secret123",
+			deduplicateLimit: 0,
+		},
+		{
+			name:             "client with limited deduplication",
+			address:          "10.0.0.100:4026",
+			password:         "secret123",
+			deduplicateLimit: 10,
 		},
 	}
 
@@ -35,7 +41,7 @@ func TestNewClient(t *testing.T) {
 			tpiLogger := log.New(io.Discard, "", 0)
 			appLogger := log.New(io.Discard, "", 0)
 
-			client := NewClient(tt.address, tt.password, tpiLogger, appLogger, tt.deduplicate)
+			client := NewClient(tt.address, tt.password, tpiLogger, appLogger, tt.deduplicateLimit)
 
 			if client.address != tt.address {
 				t.Errorf("address = %q, want %q", client.address, tt.address)
@@ -49,8 +55,8 @@ func TestNewClient(t *testing.T) {
 			if client.appLogger != appLogger {
 				t.Error("appLogger not set correctly")
 			}
-			if client.deduplicate != tt.deduplicate {
-				t.Errorf("deduplicate = %v, want %v", client.deduplicate, tt.deduplicate)
+			if client.deduplicateLimit != tt.deduplicateLimit {
+				t.Errorf("deduplicateLimit = %v, want %v", client.deduplicateLimit, tt.deduplicateLimit)
 			}
 			if client.reconnectDelay != initialDelay {
 				t.Errorf("reconnectDelay = %v, want %v", client.reconnectDelay, initialDelay)
@@ -88,7 +94,7 @@ func TestClient_Close(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := newTestClient(false)
+			client := newTestClient(-1)
 			var mockConn *mockConn
 
 			if tt.setupConn {
@@ -142,7 +148,7 @@ func TestClient_resetBackoff(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := newTestClient(false)
+			client := newTestClient(-1)
 			client.reconnectDelay = tt.initialDelay
 
 			client.resetBackoff()
@@ -156,55 +162,76 @@ func TestClient_resetBackoff(t *testing.T) {
 
 func TestClient_ReadLoop(t *testing.T) {
 	tests := []struct {
-		name            string
-		readData        string
-		deduplicate     bool
-		wantMessages    []string
-		wantErrType     string
-		wantLogContains string
+		name             string
+		readData         string
+		deduplicateLimit int
+		wantMessages     []string
+		wantErrType      string
+		wantLogContains  string
 	}{
 		{
-			name:         "single message",
-			readData:     "message1\n",
-			deduplicate:  false,
-			wantMessages: []string{"message1"},
-			wantErrType:  "ConnectionError",
+			name:             "single message",
+			readData:         "message1\n",
+			deduplicateLimit: -1,
+			wantMessages:     []string{"message1"},
+			wantErrType:      "ConnectionError",
 		},
 		{
-			name:         "multiple messages",
-			readData:     "message1\nmessage2\nmessage3\n",
-			deduplicate:  false,
-			wantMessages: []string{"message1", "message2", "message3"},
-			wantErrType:  "ConnectionError",
+			name:             "multiple messages",
+			readData:         "message1\nmessage2\nmessage3\n",
+			deduplicateLimit: -1,
+			wantMessages:     []string{"message1", "message2", "message3"},
+			wantErrType:      "ConnectionError",
 		},
 		{
-			name:         "deduplication enabled - skip duplicates",
-			readData:     "msg1\nmsg1\nmsg2\nmsg2\nmsg3\n",
-			deduplicate:  true,
-			wantMessages: []string{"msg1", "msg2", "msg3"},
-			wantErrType:  "ConnectionError",
+			name:             "infinite deduplication enabled - skip duplicates",
+			readData:         "msg1\nmsg1\nmsg2\nmsg2\nmsg3\n",
+			deduplicateLimit: 0,
+			wantMessages:     []string{"msg1", "msg2", "msg3"},
+			wantErrType:      "ConnectionError",
 		},
 		{
-			name:         "deduplication disabled - keep all",
-			readData:     "msg1\nmsg1\nmsg2\n",
-			deduplicate:  false,
-			wantMessages: []string{"msg1", "msg1", "msg2"},
-			wantErrType:  "ConnectionError",
+			name:             "deduplication disabled - keep all",
+			readData:         "msg1\nmsg1\nmsg2\n",
+			deduplicateLimit: -1,
+			wantMessages:     []string{"msg1", "msg1", "msg2"},
+			wantErrType:      "ConnectionError",
 		},
 		{
-			name:            "connection closed (EOF)",
-			readData:        "",
-			deduplicate:     false,
-			wantMessages:    []string{},
-			wantErrType:     "ConnectionError",
-			wantLogContains: "Connection closed by remote",
+			name:             "limited deduplication - ignore 1",
+			readData:         "msg1\nmsg1\nmsg1\nmsg1\n",
+			deduplicateLimit: 1,
+			wantMessages:     []string{"msg1", "msg1"},
+			wantErrType:      "ConnectionError",
 		},
 		{
-			name:         "deduplication with alternating messages",
-			readData:     "msg1\nmsg2\nmsg1\nmsg2\n",
-			deduplicate:  true,
-			wantMessages: []string{"msg1", "msg2", "msg1", "msg2"},
-			wantErrType:  "ConnectionError",
+			name:             "limited deduplication - ignore 2",
+			readData:         "msg1\nmsg1\nmsg1\nmsg1\n",
+			deduplicateLimit: 2,
+			wantMessages:     []string{"msg1", "msg1"}, // 1st is logged, 2nd & 3rd ignored, 4th is logged
+			wantErrType:      "ConnectionError",
+		},
+		{
+			name:             "limited deduplication - complex sequence",
+			readData:         "msg1\nmsg1\nmsg1\nmsg2\nmsg2\nmsg2\nmsg1\n",
+			deduplicateLimit: 1,
+			wantMessages:     []string{"msg1", "msg1", "msg2", "msg2", "msg1"},
+			wantErrType:      "ConnectionError",
+		},
+		{
+			name:             "connection closed (EOF)",
+			readData:         "",
+			deduplicateLimit: -1,
+			wantMessages:     []string{},
+			wantErrType:      "ConnectionError",
+			wantLogContains:  "Connection closed by remote",
+		},
+		{
+			name:             "deduplication with alternating messages",
+			readData:         "msg1\nmsg2\nmsg1\nmsg2\n",
+			deduplicateLimit: 0,
+			wantMessages:     []string{"msg1", "msg2", "msg1", "msg2"},
+			wantErrType:      "ConnectionError",
 		},
 	}
 
@@ -219,7 +246,7 @@ func TestClient_ReadLoop(t *testing.T) {
 				"testpass",
 				tpiLogger,
 				appLogger,
-				tt.deduplicate,
+				tt.deduplicateLimit,
 			)
 
 			// Set up mock connection
@@ -279,7 +306,7 @@ func TestClient_ReadLoop_LastMessageTracking(t *testing.T) {
 		"testpass",
 		tpiLogger,
 		appLogger,
-		true, // deduplication enabled
+		0, // infinite deduplication enabled
 	)
 
 	mockConn := newMockConn("first\nsecond\nsecond\nthird\n")
@@ -357,7 +384,7 @@ func TestClient_authenticate(t *testing.T) {
 				tt.password,
 				tpiLogger,
 				appLogger,
-				false,
+				-1,
 			)
 
 			mock := newMockConn(tt.serverRead)
@@ -432,7 +459,7 @@ func TestClient_Connect(t *testing.T) {
 				"testpass",
 				tpiLogger,
 				appLogger,
-				false,
+				-1,
 			)
 
 			// Mock dialTimeout
