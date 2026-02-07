@@ -63,12 +63,11 @@ func TestParseArgs(t *testing.T) {
 		},
 		{
 			name: "flags and valid arguments",
-			args: []string{"-m", "-l", "-u", "192.168.1.100"},
+			args: []string{"-v", "-u", "192.168.1.100"},
 			wantConfig: &Config{
 				EnvisaLinkIP:     "192.168.1.100",
 				EnvisaLinkPort:   4025,
-				PrintTPIMessages: true,
-				PrintAppLog:      true,
+				Verbose:          true,
 				Deduplicate:      true,
 				DeduplicateLimit: 0,
 			},

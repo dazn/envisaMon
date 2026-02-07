@@ -87,8 +87,7 @@ type Config struct {
 	EnvisaLinkPort   int
 	DestinationURL   string
 	DestinationPath  string
-	PrintTPIMessages bool
-	PrintAppLog      bool
+	Verbose          bool
 	Deduplicate      bool
 	DeduplicateLimit int
 }
@@ -104,7 +103,7 @@ func parseArgs(args []string) (*Config, error) {
 		fmt.Fprintf(out, "\nOptions:\n")
 		fs.PrintDefaults()
 		fmt.Fprintf(out, "\nExamples:\n")
-		fmt.Fprintf(out, "  %s 192.168.1.100\n", os.Args[0])
+		fmt.Fprintf(out, "  %s -v 192.168.1.100\n", os.Args[0])
 		fmt.Fprintf(out, "  %s -u 192.168.1.100\n", os.Args[0])
 		fmt.Fprintf(out, "  %s -u 100 192.168.1.100\n", os.Args[0])
 		fmt.Fprintf(out, "  %s 192.168.1.100 https://events.example.com:8080\n", os.Args[0])
@@ -114,8 +113,7 @@ func parseArgs(args []string) (*Config, error) {
 
 func parseConfig(fs *flag.FlagSet, args []string) (*Config, error) {
 	config := &Config{}
-	fs.BoolVar(&config.PrintTPIMessages, "m", false, "print TPI messages to stdout")
-	fs.BoolVar(&config.PrintAppLog, "l", false, "print application log to stdout")
+	fs.BoolVar(&config.Verbose, "v", false, "verbose output (print logs and TPI messages to stdout)")
 	fs.BoolVar(&config.Deduplicate, "u", false, "deduplicate consecutive identical TPI messages. Optionally specify number of duplicates to ignore (e.g., -u 10)")
 
 	if err := fs.Parse(args); err != nil {
@@ -239,7 +237,7 @@ func setupLogging(config *Config) (*log.Logger, *log.Logger, error) {
 		tpiWriters = append(tpiWriters, tpiReporter)
 	}
 
-	if config.PrintTPIMessages {
+	if config.Verbose {
 		tpiWriters = append(tpiWriters, os.Stdout)
 	}
 	tpiWriter := io.MultiWriter(tpiWriters...)
@@ -252,7 +250,7 @@ func setupLogging(config *Config) (*log.Logger, *log.Logger, error) {
 		appWriters = append(appWriters, appReporter)
 	}
 
-	if config.PrintAppLog {
+	if config.Verbose {
 		appWriters = append(appWriters, os.Stdout)
 	}
 	appWriter := io.MultiWriter(appWriters...)

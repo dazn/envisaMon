@@ -29,7 +29,7 @@ export ENVISALINK_TPI_KEY="your_password"
 ./envisaMon 192.168.1.50:4026 https://your-endpoint.com/restPath
 
 # Debug mode (logs to stdout)
-./envisaMon -m -l 192.168.1.50 https://your-endpoint.com/restPath
+./envisaMon -v 192.168.1.50 https://your-endpoint.com/restPath
 ```
 
 ### Testing
@@ -63,7 +63,7 @@ go mod tidy
 - Handles dual logging setup with lumberjack for log rotation (logs/tpi-messages.log and logs/application.log)
 - Manages signal handling for graceful shutdown (SIGINT, SIGTERM)
 - Implements auto-reconnect loop with infinite retries
-- Command-line flag parsing for `-m` (print messages), `-l` (print app logs), `-u [n]` (deduplicate with optional limit)
+- Command-line flag parsing for `-v` (verbose output), `-u [n]` (deduplicate with optional limit)
 
 **TPI Package (`tpi/`):**
 - `client.go`: Core TPI client with connection management

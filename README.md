@@ -33,8 +33,7 @@ export ENVISALINK_TPI_KEY="your_password"
 
 ### Options
 
-*   `-m`: Print raw TPI messages to standard output (stdout) in addition to the log file.
-*   `-l`: Print application operational logs to standard output (stdout) in addition to the log file.
+*   `-v`: Verbose output. Print both raw TPI messages and application operational logs to standard output (stdout) in addition to the log files.
 *   `-u [n]`: Deduplicate consecutive identical TPI messages. Optionally specify a number `n` to ignore only `n` duplicates before logging the next one (e.g., `-u 10` logs the first instance, ignores 10 duplicates, then logs the 11th). If `n` is omitted, all subsequent duplicates are ignored.
 
 ### Examples
@@ -56,7 +55,7 @@ Connect to a custom port and report:
 
 Connect, see logs in console, and report:
 ```bash
-./envisaMon -m -l 192.168.1.50 https://api.myserver.com/events
+./envisaMon -v 192.168.1.50 https://api.myserver.com/events
 ```
 
 ## REST API Reporting (Optional)
