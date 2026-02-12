@@ -1,0 +1,50 @@
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+envisaMon
+envisaMon-*
+
+# Logs
+logs/
+*.log
+
+# Git
+.git/
+.gitignore
+
+# Docker files
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Documentation (already in codebase if needed)
+README.md
+CLAUDE.md
+EnvisaLinkTPI-*.md
+*.md
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test files and coverage
+*_test.go
+coverage.out
+*.test
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Environment files (secrets should not be in images)
+.env
+.env.*
+
+# Go build cache
+.cache/
