@@ -15,6 +15,9 @@ go build -o envisaMon
 
 # Cross-compile for MIPS Big Endian, Soft Float
 GOOS=linux GOARCH=mips GOMIPS=softfloat go build -ldflags="-s -w" -o build/envisaMon-linux-mips-softfloat .
+
+# Cross-compile for MIPS Little Endian, Soft Float (e.g., TP-Link ER605 v2)
+GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -ldflags="-s -w" -o build/envisaMon-linux-mipsle-softfloat .
 ```
 
 ### Running

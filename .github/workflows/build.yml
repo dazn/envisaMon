@@ -45,6 +45,10 @@ jobs:
             arch: mips
             gomips: softfloat
             name: envisaMon-linux-mips-softfloat
+          - os: linux
+            arch: mipsle
+            gomips: softfloat
+            name: envisaMon-linux-mipsle-softfloat
 
     steps:
       - name: Checkout code
