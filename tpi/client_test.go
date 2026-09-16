@@ -1,6 +1,7 @@
 package tpi
 
 import (
+	"bufio"
 	"io"
 	"log"
 	"net"
@@ -100,6 +101,7 @@ func TestClient_Close(t *testing.T) {
 			if tt.setupConn {
 				mockConn = newMockConn("")
 				client.conn = mockConn
+				client.reader = bufio.NewReader(mockConn)
 			}
 
 			err := client.Close()
@@ -252,6 +254,7 @@ func TestClient_ReadLoop(t *testing.T) {
 			// Set up mock connection
 			mockConn := newMockConn(tt.readData)
 			client.conn = mockConn
+			client.reader = bufio.NewReader(mockConn)
 
 			// Run ReadLoop
 			err := client.ReadLoop()
@@ -311,6 +314,7 @@ func TestClient_ReadLoop_LastMessageTracking(t *testing.T) {
 
 	mockConn := newMockConn("first\nsecond\nsecond\nthird\n")
 	client.conn = mockConn
+	client.reader = bufio.NewReader(mockConn)
 
 	// Run ReadLoop (will return error when EOF reached)
 	_ = client.ReadLoop()
@@ -389,6 +393,7 @@ func TestClient_authenticate(t *testing.T) {
 
 			mock := newMockConn(tt.serverRead)
 			client.conn = mock
+			client.reader = bufio.NewReader(mock)
 
 			err := client.authenticate()
 
@@ -422,6 +427,100 @@ func TestClient_authenticate(t *testing.T) {
 	}
 }
 
+func TestClient_Connect_ReadLoopPreservesBufferedMessages(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		serverData string
+		laterData  string
+	}{
+		{
+			name:       "complete messages buffered during authentication",
+			serverData: "Login:\r\nOK\r\nmessage1\r\nmessage2\r\n",
+		},
+		{
+			name:       "partial message buffered during authentication",
+			serverData: "Login:\r\nOK\r\nmess",
+			laterData:  "age1\r\nmessage2\r\n",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := newMockConn(tt.serverData)
+			originalDial := dialTimeout
+			t.Cleanup(func() { dialTimeout = originalDial })
+			dialTimeout = func(network, address string, timeout time.Duration) (net.Conn, error) {
+				return mock, nil
+			}
+
+			client := newTestClient(-1)
+			tpiBuf, tpiLogger := newTestLogger()
+			client.tpiLogger = tpiLogger
+			if err := client.Connect(); err != nil {
+				t.Fatalf("Connect() returned error: %v", err)
+			}
+			if mock.readBuf.Len() != 0 {
+				t.Fatal("authentication did not read ahead through the supplied data")
+			}
+			// Make the remainder available only after authentication has read ahead.
+			mock.readBuf.WriteString(tt.laterData)
+
+			err := client.ReadLoop()
+			if connErr, ok := err.(*ConnectionError); !ok || connErr.Message != "connection closed" || connErr.Err != nil {
+				t.Errorf("ReadLoop() error = %v, want connection closed at EOF", err)
+			}
+			if got, want := tpiBuf.String(), "message1\nmessage2\n"; got != want {
+				t.Errorf("logged messages = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestClient_Connect_ReplacesBufferedReader(t *testing.T) {
+	first := newMockConn("Login:\r\nOK\r\nstale-message\r\n")
+	second := newMockConn("Login:\r\nOK\r\nnew-message\r\n")
+	originalDial := dialTimeout
+	t.Cleanup(func() { dialTimeout = originalDial })
+	connections := []*mockConn{first, second}
+	dialTimeout = func(network, address string, timeout time.Duration) (net.Conn, error) {
+		if len(connections) == 0 {
+			t.Fatal("unexpected extra dial")
+		}
+		conn := connections[0]
+		connections = connections[1:]
+		return conn, nil
+	}
+
+	client := newTestClient(-1)
+	tpiBuf, tpiLogger := newTestLogger()
+	client.tpiLogger = tpiLogger
+	if err := client.Connect(); err != nil {
+		t.Fatalf("first Connect() returned error: %v", err)
+	}
+	previousReader := client.reader
+	if got, want := previousReader.Buffered(), len("stale-message\r\n"); got != want {
+		t.Fatalf("buffered bytes = %d, want %d", got, want)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("closing first connection: %v", err)
+	}
+
+	if err := client.Connect(); err != nil {
+		t.Fatalf("second Connect() returned error: %v", err)
+	}
+	if client.reader == previousReader {
+		t.Fatal("second Connect() reused the previous reader")
+	}
+	if client.conn != second {
+		t.Fatal("second Connect() did not replace the connection")
+	}
+	err := client.ReadLoop()
+	if connErr, ok := err.(*ConnectionError); !ok || connErr.Message != "connection closed" || connErr.Err != nil {
+		t.Errorf("ReadLoop() error = %v, want connection closed at EOF", err)
+	}
+	if got, want := tpiBuf.String(), "new-message\n"; got != want {
+		t.Errorf("logged messages = %q, want %q", got, want)
+	}
+}
+
 func TestClient_Connect(t *testing.T) {
 	// Save original dialer and restore after test
 	originalDial := dialTimeout
@@ -444,7 +543,7 @@ func TestClient_Connect(t *testing.T) {
 		},
 		{
 			name:        "auth failure",
-			serverData:  "Login:\r\nFAILED\r\n",
+			serverData:  "Login:\r\nFAILED\r\nstale-message\r\n",
 			wantErrType: "AuthError",
 		},
 	}
@@ -463,11 +562,12 @@ func TestClient_Connect(t *testing.T) {
 			)
 
 			// Mock dialTimeout
+			mock := newMockConn(tt.serverData)
 			dialTimeout = func(network, address string, timeout time.Duration) (net.Conn, error) {
 				if tt.dialErr != nil {
 					return nil, tt.dialErr
 				}
-				return newMockConn(tt.serverData), nil
+				return mock, nil
 			}
 
 			err := client.Connect()
@@ -495,9 +595,18 @@ func TestClient_Connect(t *testing.T) {
 				if client.conn == nil {
 					t.Error("client.conn is nil after successful Connect")
 				}
+				if client.reader == nil {
+					t.Error("client.reader is nil after successful Connect")
+				}
 			} else {
 				if client.conn != nil {
 					t.Error("client.conn should be nil after failed Connect")
+				}
+				if client.reader != nil {
+					t.Error("client.reader should be nil after failed Connect")
+				}
+				if tt.dialErr == nil && !mock.closed {
+					t.Error("connection should be closed after failed authentication")
 				}
 			}
 		})

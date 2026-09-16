@@ -24,6 +24,7 @@ type Client struct {
 	address          string
 	password         string
 	conn             net.Conn
+	reader           *bufio.Reader
 	tpiLogger        *log.Logger
 	appLogger        *log.Logger
 	stopCh           chan struct{}
@@ -61,12 +62,14 @@ func (c *Client) Connect() error {
 	}
 
 	c.conn = conn
+	c.reader = bufio.NewReader(conn)
 	c.appLogger.Printf("INFO: Connected to %s", c.address)
 
 	// Authenticate
 	if err := c.authenticate(); err != nil {
 		c.conn.Close()
 		c.conn = nil
+		c.reader = nil
 		return err
 	}
 
@@ -83,10 +86,8 @@ func (c *Client) authenticate() error {
 		return &TimeoutError{Operation: "set read deadline", Err: err}
 	}
 
-	reader := bufio.NewReader(c.conn)
-
 	// Read "Login:" prompt
-	loginPrompt, err := reader.ReadString('\n')
+	loginPrompt, err := c.reader.ReadString('\n')
 	if err != nil {
 		return &TimeoutError{Operation: "read login prompt", Err: err}
 	}
@@ -102,7 +103,7 @@ func (c *Client) authenticate() error {
 	}
 
 	// Read authentication response
-	response, err := reader.ReadString('\n')
+	response, err := c.reader.ReadString('\n')
 	if err != nil {
 		return &TimeoutError{Operation: "read auth response", Err: err}
 	}
@@ -125,7 +126,7 @@ func (c *Client) authenticate() error {
 
 // ReadLoop reads messages from the TPI server and logs them
 func (c *Client) ReadLoop() error {
-	scanner := bufio.NewScanner(c.conn)
+	scanner := bufio.NewScanner(c.reader)
 
 	for scanner.Scan() {
 		line := scanner.Text()
