@@ -2,6 +2,7 @@ package tpi
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -296,6 +297,115 @@ func TestClient_ReadLoop(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestClient_ReadLoop_ClosesSession(t *testing.T) {
+	readErr := errors.New("injected read failure")
+	closeErr := errors.New("injected close failure")
+	for _, tt := range []struct {
+		name        string
+		data        string
+		readErr     error
+		wantMessage string
+		wantErr     error
+	}{
+		{name: "EOF", wantMessage: "connection closed"},
+		{name: "read error", readErr: readErr, wantMessage: "read error", wantErr: readErr},
+		{name: "oversized token", data: strings.Repeat("x", bufio.MaxScanTokenSize+1), wantMessage: "read error", wantErr: bufio.ErrTooLong},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, cleanup := range []struct {
+				name string
+				err  error
+			}{
+				{name: "close succeeds"},
+				{name: "close fails", err: closeErr},
+			} {
+				t.Run(cleanup.name, func(t *testing.T) {
+					conn := newMockConn(tt.data)
+					conn.readErr = tt.readErr
+					conn.closeErr = cleanup.err
+					client := newTestClient(-1)
+					appBuf, appLogger := newTestLogger()
+					client.appLogger = appLogger
+					client.conn = conn
+					client.reader = bufio.NewReader(conn)
+
+					err := client.ReadLoop()
+					if !conn.closed {
+						t.Error("session connection was not closed before ReadLoop returned")
+					}
+					select {
+					case <-client.stopCh:
+						t.Error("ReadLoop closed the permanent shutdown channel")
+					default:
+					}
+					connErr, ok := err.(*ConnectionError)
+					if !ok {
+						t.Fatalf("ReadLoop() error = %v (%T), want *ConnectionError", err, err)
+					}
+					if connErr.Message != tt.wantMessage || connErr.Err != tt.wantErr {
+						t.Errorf("ReadLoop() error = %#v, want Message %q and Err %v", connErr, tt.wantMessage, tt.wantErr)
+					}
+					if cleanup.err != nil && !strings.Contains(appBuf.String(), "WARN: Failed to close session connection: "+cleanup.err.Error()) {
+						t.Errorf("missing cleanup warning in app log: %q", appBuf.String())
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestClient_Connect_ClosesFailedSessionBeforeReconnect(t *testing.T) {
+	first := newMockConn("Login:\r\nOK\r\nfirst-message\r\n")
+	first.readErr = io.ErrUnexpectedEOF
+	second := newMockConn("Login:\r\nOK\r\nsecond-message\r\nthird-message\r\n")
+	connections := []*mockConn{first, second}
+	dials := 0
+	originalDial := dialTimeout
+	t.Cleanup(func() { dialTimeout = originalDial })
+	dialTimeout = func(network, address string, timeout time.Duration) (net.Conn, error) {
+		if dials >= len(connections) {
+			t.Fatal("unexpected extra dial")
+		}
+		if dials == 1 && !first.closed {
+			t.Error("first connection was still open when the second dial started")
+		}
+		conn := connections[dials]
+		dials++
+		return conn, nil
+	}
+
+	client := newTestClient(-1)
+	tpiBuf, tpiLogger := newTestLogger()
+	client.tpiLogger = tpiLogger
+	for i, conn := range connections {
+		if err := client.Connect(); err != nil {
+			t.Fatalf("session %d Connect() returned error: %v", i+1, err)
+		}
+		if got := conn.writeBuf.String(); got != "testpass\r" {
+			t.Errorf("session %d authentication wrote %q, want password", i+1, got)
+		}
+		err := client.ReadLoop()
+		wantMessage := "connection closed"
+		if conn.readErr != nil {
+			wantMessage = "read error"
+		}
+		if connErr, ok := err.(*ConnectionError); !ok || connErr.Message != wantMessage || connErr.Err != conn.readErr {
+			t.Errorf("session %d ReadLoop() error = %v, want %q with cause %v", i+1, err, wantMessage, conn.readErr)
+		}
+		if !conn.closed {
+			t.Errorf("session %d connection was not closed", i+1)
+		}
+		select {
+		case <-client.stopCh:
+			t.Fatal("ReadLoop closed the permanent shutdown channel")
+		default:
+		}
+	}
+	if got, want := tpiBuf.String(), "first-message\nsecond-message\nthird-message\n"; got != want {
+		t.Errorf("logged messages = %q, want %q", got, want)
 	}
 }
 

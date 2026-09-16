@@ -13,6 +13,8 @@ type mockConn struct {
 	readBuf  *bytes.Buffer
 	writeBuf *bytes.Buffer
 	closed   bool
+	readErr  error
+	closeErr error
 }
 
 // newMockConn creates a new mock connection with the given read data
@@ -25,6 +27,9 @@ func newMockConn(readData string) *mockConn {
 }
 
 func (m *mockConn) Read(b []byte) (n int, err error) {
+	if m.readBuf.Len() == 0 && m.readErr != nil {
+		return 0, m.readErr
+	}
 	return m.readBuf.Read(b)
 }
 
@@ -34,7 +39,7 @@ func (m *mockConn) Write(b []byte) (n int, err error) {
 
 func (m *mockConn) Close() error {
 	m.closed = true
-	return nil
+	return m.closeErr
 }
 
 func (m *mockConn) LocalAddr() net.Addr {

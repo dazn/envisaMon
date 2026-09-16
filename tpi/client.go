@@ -126,6 +126,13 @@ func (c *Client) authenticate() error {
 
 // ReadLoop reads messages from the TPI server and logs them
 func (c *Client) ReadLoop() error {
+	// Close this session without signaling permanent client shutdown.
+	defer func(conn net.Conn) {
+		if err := conn.Close(); err != nil {
+			c.appLogger.Printf("WARN: Failed to close session connection: %v", err)
+		}
+	}(c.conn)
+
 	scanner := bufio.NewScanner(c.reader)
 
 	for scanner.Scan() {
