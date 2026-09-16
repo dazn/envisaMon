@@ -4,7 +4,6 @@ import (
 	"envisaMon/tpi"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/url"
@@ -195,7 +194,6 @@ func parseConfig(fs *flag.FlagSet, args []string) (*Config, error) {
 	return config, nil
 }
 
-
 func setupLogging(config *Config) (*log.Logger, *log.Logger, error) {
 	// Ensure logs directory exists
 	if err := os.MkdirAll("./logs", 0755); err != nil {
@@ -231,29 +229,27 @@ func setupLogging(config *Config) (*log.Logger, *log.Logger, error) {
 	}
 
 	// TPI Writer Construction
-	var tpiWriters []io.Writer
-	tpiWriters = append(tpiWriters, tpiRoller)
+	tpiWriters := []logDestination{{name: "file", writer: tpiRoller}}
 	if tpiReporter != nil {
-		tpiWriters = append(tpiWriters, tpiReporter)
+		tpiWriters = append(tpiWriters, logDestination{name: "remote", writer: tpiReporter})
 	}
 
 	if config.Verbose {
-		tpiWriters = append(tpiWriters, os.Stdout)
+		tpiWriters = append(tpiWriters, logDestination{name: "stdout", writer: os.Stdout})
 	}
-	tpiWriter := io.MultiWriter(tpiWriters...)
+	tpiWriter := newLogFanout("TPI", os.Stderr, tpiWriters...)
 	tpiLogger := log.New(tpiWriter, "", 0) // flags=0 means NO timestamp, NO prefix
 
 	// App Writer Construction
-	var appWriters []io.Writer
-	appWriters = append(appWriters, appRoller)
+	appWriters := []logDestination{{name: "file", writer: appRoller}}
 	if appReporter != nil {
-		appWriters = append(appWriters, appReporter)
+		appWriters = append(appWriters, logDestination{name: "remote", writer: appReporter})
 	}
 
 	if config.Verbose {
-		appWriters = append(appWriters, os.Stdout)
+		appWriters = append(appWriters, logDestination{name: "stdout", writer: os.Stdout})
 	}
-	appWriter := io.MultiWriter(appWriters...)
+	appWriter := newLogFanout("Application", os.Stderr, appWriters...)
 	appLogger := log.New(appWriter, "", log.LstdFlags)
 
 	return tpiLogger, appLogger, nil
