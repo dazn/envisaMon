@@ -80,6 +80,14 @@ To authenticate with your REST API, set the `ALARM_MON_API_KEY` environment vari
 export ALARM_MON_API_KEY="your_api_key_here"
 ```
 
+### System Name
+
+To label events from a deployment with a human-readable name, set the optional `ALARM_MON_SYSTEM_NAME` environment variable. It is read once at startup.
+
+```bash
+export ALARM_MON_SYSTEM_NAME="Main House"
+```
+
 ### JSON Payload
 
 The reporting API expects a JSON object with the following structure:
@@ -90,7 +98,8 @@ The reporting API expects a JSON object with the following structure:
   "event_unixtime": "1678886400.123456",
   "event_message": "The log message content",
   "message_type": "TPI" | "Application",
-  "system_id": "192.168.1.50:4025"
+  "system_id": "192.168.1.50:4025",
+  "system_name": "Main House"
 }
 ```
 
@@ -99,6 +108,7 @@ The reporting API expects a JSON object with the following structure:
 *   `event_message`: The log content (timestamps are stripped from Application logs).
 *   `message_type`: Indicates the source of the log ("TPI" for raw device messages, "Application" for internal app logs).
 *   `system_id`: The configured EnvisaLink host and port.
+*   `system_name`: The value of `ALARM_MON_SYSTEM_NAME`. Omitted if the variable is unset or blank.
 
 ## Logging
 

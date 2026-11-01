@@ -23,6 +23,10 @@
     "system_id": {
       "type": "string",
       "description": "Identifier for the alarm system or monitoring instance."
+    },
+    "system_name": {
+      "type": "string",
+      "description": "Human-readable name for the alarm system or monitoring instance."
     }
   },
   "required": [

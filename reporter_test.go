@@ -27,7 +27,7 @@ func TestAsyncReporter_TimestampResolution(t *testing.T) {
 	defer ts.Close()
 
 	errorWriter := &strings.Builder{}
-	reporter := NewAsyncReporter(ts.URL, "test-system", "TPI", false, errorWriter)
+	reporter := NewAsyncReporter(ts.URL, "test-system", "", "TPI", false, errorWriter)
 	if reporter == nil {
 		t.Fatal("Failed to create AsyncReporter")
 	}
@@ -70,5 +70,27 @@ func TestAsyncReporter_TimestampResolution(t *testing.T) {
 
 	if errorWriter.Len() > 0 {
 		t.Errorf("Internal reporter errors: %s", errorWriter.String())
+	}
+}
+
+func TestEvent_SystemNameJSON(t *testing.T) {
+	tests := []struct {
+		name       string
+		systemName string
+		want       bool
+	}{
+		{name: "set name is included", systemName: "Main House", want: true},
+		{name: "empty name is omitted", systemName: "", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload, err := json.Marshal(Event{SystemID: "test-system", SystemName: tt.systemName})
+			if err != nil {
+				t.Fatalf("Failed to marshal event: %v", err)
+			}
+			if got := strings.Contains(string(payload), `"system_name"`); got != tt.want {
+				t.Errorf("system_name present = %v, want %v in: %s", got, tt.want, payload)
+			}
+		})
 	}
 }

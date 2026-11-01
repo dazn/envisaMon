@@ -205,6 +205,7 @@ func TestSetupLoggingDestinations(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			loggingTestDirectory(t)
 			t.Setenv("ALARM_MON_API_KEY", tt.key)
+			t.Setenv("ALARM_MON_SYSTEM_NAME", "  Main House  ")
 			stdout := captureLoggingOutput(t, &os.Stdout)
 			stderr := captureLoggingOutput(t, &os.Stderr)
 			captured := make(chan Event, 4)
@@ -280,7 +281,7 @@ func TestSetupLoggingDestinations(t *testing.T) {
 					select {
 					case event := <-captured:
 						message, ok := want[event.MessageType]
-						if !ok || event.EventMessage != message || event.SystemID != "127.0.0.1:4025" {
+						if !ok || event.EventMessage != message || event.SystemID != "127.0.0.1:4025" || event.SystemName != "Main House" {
 							t.Errorf("unexpected remote event: %+v", event)
 						}
 						delete(want, event.MessageType)

@@ -20,6 +20,7 @@ type Event struct {
 	EventMessage  string `json:"event_message"`
 	MessageType   string `json:"message_type"`
 	SystemID      string `json:"system_id"`
+	SystemName    string `json:"system_name,omitempty"`
 }
 
 // reportedMessage wraps a log message with its arrival timestamp
@@ -33,6 +34,7 @@ type AsyncReporter struct {
 	url            string
 	apiKey         string
 	systemID       string
+	systemName     string
 	messageType    string
 	stripTimestamp bool
 	client         *http.Client
@@ -41,7 +43,7 @@ type AsyncReporter struct {
 }
 
 // NewAsyncReporter creates a new reporter. Returns nil if url or ALARM_MON_API_KEY is empty.
-func NewAsyncReporter(url, systemID, messageType string, stripTimestamp bool, errorWriter io.Writer) *AsyncReporter {
+func NewAsyncReporter(url, systemID, systemName, messageType string, stripTimestamp bool, errorWriter io.Writer) *AsyncReporter {
 	apiKey := os.Getenv("ALARM_MON_API_KEY")
 	if url == "" || apiKey == "" {
 		return nil
@@ -56,6 +58,7 @@ func NewAsyncReporter(url, systemID, messageType string, stripTimestamp bool, er
 		url:            url,
 		apiKey:         apiKey,
 		systemID:       systemID,
+		systemName:     systemName,
 		messageType:    messageType,
 		stripTimestamp: stripTimestamp,
 		client: &http.Client{
@@ -113,6 +116,7 @@ func (ar *AsyncReporter) report(rm reportedMessage) {
 		EventMessage:  cleanMsg,
 		MessageType:   ar.messageType,
 		SystemID:      ar.systemID,
+		SystemName:    ar.systemName,
 	}
 
 	payload, err := json.Marshal(event)
