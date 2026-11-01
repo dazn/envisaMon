@@ -191,7 +191,7 @@ func TestSetupLogging(t *testing.T) {
 	// Since setupLogging has hardcoded "./logs", we might need to change directory or mock it.
 	// For now, let's just test that it runs without error if the directory exists.
 	// In a real scenario, we'd refactor setupLogging to accept a base path.
-	
+
 	// Temporarily change working directory to temp dir
 	oldWd, _ := os.Getwd()
 	os.Chdir(tmpDir)
