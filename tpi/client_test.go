@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 )
 
@@ -720,5 +721,327 @@ func TestClient_Connect(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestScanFrames(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		want []string
+	}{
+		{
+			name: "packets with line endings",
+			data: "%01,a$\r\n%02,b$\r\n",
+			want: []string{"%01,a$", "%02,b$"},
+		},
+		{
+			name: "packets without line endings",
+			data: "%01,a$%02,b$",
+			want: []string{"%01,a$", "%02,b$"},
+		},
+		{
+			name: "mixed line endings",
+			data: "^00,00$\r\n%05,x$%01,a$\n",
+			want: []string{"^00,00$", "%05,x$", "%01,a$"},
+		},
+		{
+			name: "plain lines",
+			data: "OK\r\nTimed Out\n",
+			want: []string{"OK", "Timed Out"},
+		},
+		{
+			name: "blank lines are skipped",
+			data: "first\n\r\n\nsecond\n",
+			want: []string{"first", "second"},
+		},
+		{
+			name: "partial packet at EOF",
+			data: "%01,a$%02,b",
+			want: []string{"%01,a$", "%02,b"},
+		},
+		{
+			name: "line endings only",
+			data: "\r\n\r\n",
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		for _, source := range []struct {
+			name   string
+			reader io.Reader
+		}{
+			{name: "single read", reader: strings.NewReader(tt.data)},
+			{name: "one byte per read", reader: iotest.OneByteReader(strings.NewReader(tt.data))},
+		} {
+			t.Run(tt.name+"/"+source.name, func(t *testing.T) {
+				scanner := bufio.NewScanner(source.reader)
+				scanner.Split(scanFrames)
+
+				var got []string
+				for scanner.Scan() {
+					got = append(got, scanner.Text())
+				}
+				if err := scanner.Err(); err != nil {
+					t.Fatalf("scanner error: %v", err)
+				}
+				if strings.Join(got, "|") != strings.Join(tt.want, "|") {
+					t.Errorf("frames = %q, want %q", got, tt.want)
+				}
+			})
+		}
+	}
+}
+
+const (
+	testHostReport      = "%05,001C2A45F894,UNO,01.00.117,1,20250923183203$"
+	testLaterHostReport = "%05,001C2A45F894,UNO,01.00.117,1,20250923183223$"
+)
+
+func TestClient_ReadLoop_UNOSession(t *testing.T) {
+	tpiBuf, tpiLogger := newTestLogger()
+	appBuf, appLogger := newTestLogger()
+	client := NewClient("192.168.1.50:4025", "testpass", tpiLogger, appLogger, -1)
+
+	conn := newMockConn(testHostReport + "\r\n%01,00$" +
+		"^00,00$\r\n" + testLaterHostReport + "\r\n^00,06$\r\n%02,01$")
+	client.conn = conn
+	client.reader = bufio.NewReader(conn)
+
+	if _, ok := client.ReadLoop().(*ConnectionError); !ok {
+		t.Error("ReadLoop() should end with *ConnectionError at EOF")
+	}
+
+	if got, want := tpiBuf.String(), testHostReport+"\n%01,00$\n%02,01$\n"; got != want {
+		t.Errorf("logged messages = %q, want %q", got, want)
+	}
+	if got := conn.writeBuf.String(); got != "" {
+		t.Errorf("wrote %q, want nothing", got)
+	}
+
+	appOutput := appBuf.String()
+	if !strings.Contains(appOutput, "INFO: UNO-family panel detected: "+testHostReport) {
+		t.Errorf("app log should report the detected panel, got %q", appOutput)
+	}
+	if !strings.Contains(appOutput, "WARN: TPI command rejected: ^00,06$") {
+		t.Errorf("app log should report the rejected command, got %q", appOutput)
+	}
+	if strings.Contains(appOutput, "^00,00$") {
+		t.Errorf("app log should not report accepted commands, got %q", appOutput)
+	}
+}
+
+// Bytes captured from a UNO on firmware 1.01.197, where frames end in "\n\r"
+func TestClient_ReadLoop_UNOCapture(t *testing.T) {
+	tpiBuf, tpiLogger := newTestLogger()
+	_, appLogger := newTestLogger()
+	client := NewClient("192.168.1.50:4025", "testpass", tpiLogger, appLogger, -1)
+
+	const (
+		zones      = "%01,00000000000000000000000000000000$"
+		partitions = "%02,0500000000000000$"
+		bypasses   = "%04,00000000000000000000000000000000$"
+		troubles   = "%06,0000000000000000$"
+		report     = "%05,001C2A401484,UNO,01.01.197 -  ,1,20261031223326$"
+	)
+	frames := []string{zones, partitions, bypasses, report, troubles, "^00,00$"}
+
+	conn := newMockConn("Login:\r\nOK\r\n" + strings.Join(frames, "\n\r") + "\n\r")
+	client.conn = conn
+	client.reader = bufio.NewReader(conn)
+	if err := client.authenticate(); err != nil {
+		t.Fatalf("authenticate() returned error: %v", err)
+	}
+	conn.writeBuf.Reset()
+	_ = client.ReadLoop()
+
+	want := strings.Join([]string{zones, partitions, bypasses, report, troubles}, "\n") + "\n"
+	if got := tpiBuf.String(); got != want {
+		t.Errorf("logged messages = %q, want %q", got, want)
+	}
+	if got := conn.writeBuf.String(); got != "" {
+		t.Errorf("wrote %q, want nothing", got)
+	}
+}
+
+func TestClient_ReadLoop_UNOReconnectRepeatsHostReport(t *testing.T) {
+	tpiBuf, tpiLogger := newTestLogger()
+	_, appLogger := newTestLogger()
+	client := NewClient("192.168.1.50:4025", "testpass", tpiLogger, appLogger, -1)
+
+	sessions := []*mockConn{newMockConn(testHostReport), newMockConn(testLaterHostReport)}
+	for _, conn := range sessions {
+		client.conn = conn
+		client.reader = bufio.NewReader(conn)
+		_ = client.ReadLoop()
+	}
+
+	if got, want := tpiBuf.String(), testHostReport+"\n"+testLaterHostReport+"\n"; got != want {
+		t.Errorf("logged messages = %q, want %q", got, want)
+	}
+}
+
+func TestClient_ReadLoop_DeduplicatesAcrossPollReply(t *testing.T) {
+	tpiBuf, tpiLogger := newTestLogger()
+	_, appLogger := newTestLogger()
+	client := NewClient("192.168.1.50:4025", "testpass", tpiLogger, appLogger, 0)
+
+	conn := newMockConn(testHostReport + "%07,00$^00,00$" + testLaterHostReport + "%07,00$")
+	client.conn = conn
+	client.reader = bufio.NewReader(conn)
+	_ = client.ReadLoop()
+
+	if got, want := tpiBuf.String(), testHostReport+"\n%07,00$\n"; got != want {
+		t.Errorf("logged messages = %q, want %q", got, want)
+	}
+}
+
+func TestClient_ReadLoop_AdemcoSessionSendsNothing(t *testing.T) {
+	tpiBuf, tpiLogger := newTestLogger()
+	_, appLogger := newTestLogger()
+	client := NewClient("192.168.1.50:4025", "testpass", tpiLogger, appLogger, -1)
+
+	keypadUpdate := "%00,01,1C08,08,00,****DISARMED****  Ready to Arm  $"
+	conn := newMockConn(keypadUpdate + "\r\n%02,0100000000000000$\r\n")
+	client.conn = conn
+	client.reader = bufio.NewReader(conn)
+	_ = client.ReadLoop()
+
+	if got, want := tpiBuf.String(), keypadUpdate+"\n%02,0100000000000000$\n"; got != want {
+		t.Errorf("logged messages = %q, want %q", got, want)
+	}
+	if got := conn.writeBuf.String(); got != "" {
+		t.Errorf("wrote %q, want nothing", got)
+	}
+}
+
+// newPipeClient returns a client connected to the panel end of a net.Pipe, which
+// supports deadlines unlike mockConn
+func newPipeClient(t *testing.T, idle, timeout time.Duration) (*Client, net.Conn) {
+	t.Helper()
+
+	originalIdle, originalTimeout := pollIdle, pollTimeout
+	t.Cleanup(func() { pollIdle, pollTimeout = originalIdle, originalTimeout })
+	pollIdle, pollTimeout = idle, timeout
+
+	clientConn, panel := net.Pipe()
+	t.Cleanup(func() { panel.Close() })
+
+	client := newTestClient(-1)
+	client.conn = clientConn
+	client.reader = bufio.NewReader(clientConn)
+	return client, panel
+}
+
+// startReadLoop runs ReadLoop in the background and returns its result channel
+func startReadLoop(client *Client) <-chan error {
+	result := make(chan error, 1)
+	go func() { result <- client.ReadLoop() }()
+	return result
+}
+
+func waitForReadLoop(t *testing.T, result <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-result:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for ReadLoop to return")
+		return nil
+	}
+}
+
+func readCommand(t *testing.T, panel net.Conn) string {
+	t.Helper()
+	if err := panel.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("failed to set read deadline: %v", err)
+	}
+	buf := make([]byte, 64)
+	n, err := panel.Read(buf)
+	if err != nil {
+		t.Fatalf("failed to read command: %v", err)
+	}
+	return string(buf[:n])
+}
+
+func TestClient_ReadLoop_PollsQuietPanel(t *testing.T) {
+	client, panel := newPipeClient(t, 20*time.Millisecond, 2*time.Second)
+	result := startReadLoop(client)
+
+	// Each reply must re-arm the poll for the next quiet period
+	for i := 0; i < 3; i++ {
+		if got := readCommand(t, panel); got != pollCommand {
+			t.Fatalf("poll %d = %q, want %q", i+1, got, pollCommand)
+		}
+		if _, err := panel.Write([]byte("^00,00$\r\n")); err != nil {
+			t.Fatalf("failed to send reply: %v", err)
+		}
+	}
+
+	panel.Close()
+	if err := waitForReadLoop(t, result); err == nil {
+		t.Fatal("ReadLoop() expected error, got nil")
+	} else if _, ok := err.(*ConnectionError); !ok {
+		t.Errorf("ReadLoop() error = %v (%T), want *ConnectionError", err, err)
+	}
+}
+
+func TestClient_ReadLoop_ClosedConnectionIsNotATimeout(t *testing.T) {
+	client, panel := newPipeClient(t, time.Second, time.Second)
+	panel.Close()
+
+	if err := client.ReadLoop(); err == nil {
+		t.Fatal("ReadLoop() expected error, got nil")
+	} else if _, ok := err.(*ConnectionError); !ok {
+		t.Errorf("ReadLoop() error = %v (%T), want *ConnectionError", err, err)
+	}
+}
+
+func TestClient_ReadLoop_TimesOutWithoutPollReply(t *testing.T) {
+	client, panel := newPipeClient(t, 10*time.Millisecond, 50*time.Millisecond)
+	result := startReadLoop(client)
+
+	if got := readCommand(t, panel); got != pollCommand {
+		t.Fatalf("command = %q, want %q", got, pollCommand)
+	}
+
+	err := waitForReadLoop(t, result)
+	timeoutErr, ok := err.(*TimeoutError)
+	if !ok {
+		t.Fatalf("ReadLoop() error = %v (%T), want *TimeoutError", err, err)
+	}
+	if timeoutErr.Operation != "read" {
+		t.Errorf("Operation = %q, want %q", timeoutErr.Operation, "read")
+	}
+}
+
+func TestClient_ReadLoop_DoesNotPollActivePanel(t *testing.T) {
+	client, panel := newPipeClient(t, 500*time.Millisecond, 2*time.Second)
+	client.deduplicateLimit = 0 // Frames dropped as duplicates still count as traffic
+	result := startReadLoop(client)
+
+	commands := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 64)
+		if n, err := panel.Read(buf); err == nil {
+			commands <- string(buf[:n])
+		}
+	}()
+
+	for i := 0; i < 10; i++ {
+		if _, err := panel.Write([]byte("%01,00$\r\n")); err != nil {
+			t.Fatalf("failed to send frame: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	panel.Close()
+	waitForReadLoop(t, result)
+
+	select {
+	case got := <-commands:
+		t.Errorf("sent %q to an active panel, want nothing", got)
+	default:
 	}
 }
