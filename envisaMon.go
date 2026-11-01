@@ -219,13 +219,16 @@ func setupLogging(config *Config) (*log.Logger, *log.Logger, error) {
 	// Prepare SystemID
 	systemID := fmt.Sprintf("%s:%d", config.EnvisaLinkIP, config.EnvisaLinkPort)
 
+	// Optional human-readable name, omitted from events when unset
+	systemName := strings.TrimSpace(os.Getenv("ALARM_MON_SYSTEM_NAME"))
+
 	// Remote Reporters
 	// Only enabled if URL is provided and ALARM_MON_API_KEY is set
 	var tpiReporter, appReporter *AsyncReporter
 	apiKey := os.Getenv("ALARM_MON_API_KEY")
 	if config.DestinationURL != "" && apiKey != "" {
-		tpiReporter = NewAsyncReporter(config.DestinationURL, systemID, "TPI", false, appRoller)
-		appReporter = NewAsyncReporter(config.DestinationURL, systemID, "Application", true, appRoller)
+		tpiReporter = NewAsyncReporter(config.DestinationURL, systemID, systemName, "TPI", false, appRoller)
+		appReporter = NewAsyncReporter(config.DestinationURL, systemID, systemName, "Application", true, appRoller)
 	}
 
 	// TPI Writer Construction
