@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-EnvisaMon is a Go application that connects to an EnvisaLink module via the Third Party Interface (TPI). It's a monitoring and logging system that maintains persistent TCP connections to alarm panels, handles authentication, and logs all TPI protocol messages to disk for analysis.
+EnvisaMon is a Go application that connects to an EnvisaLink module (Ademco firmware) or a UNO-family panel via the Third Party Interface (TPI). It's a monitoring and logging system that maintains persistent TCP connections to alarm panels, handles authentication, and logs all TPI protocol messages to disk for analysis.
 
 ## Commands
 
@@ -75,7 +75,12 @@ go mod tidy
   - Authentication flow: reads "Login:" prompt, sends password with `\r`, validates "OK"/"FAILED" response
   - Message deduplication option (enabled with `-u` flag) filters consecutive identical messages. Supports an optional limit to periodically log duplicates.
   - Uses separate loggers for TPI messages (raw, no timestamp) vs application events
-  - Exposes `dialTimeout` variable for mocking in tests
+  - `scanFrames` splits the stream at `$` or newline, because the UNO spec does not guarantee a line ending after `%` packets
+  - Polls (`^00,$`) after `pollIdle` of silence and returns `TimeoutError` if nothing arrives within `pollTimeout`, so panels with regular traffic are never written to
+  - `filterFrame` detects UNO-family panels from the first `%05` of a session, and drops `^` replies and repeat `%05` reports before deduplication
+  - UNO panels push `%01`, `%02`, `%04`, `%05` and `%06` at login, so no state dump (`^0C,$`) is requested
+  - Never add arm, disarm, panic or PGM commands: `^00,$` is the only command sent after login
+  - Exposes `dialTimeout`, `pollIdle` and `pollTimeout` variables for overriding in tests
 - `errors.go`: Custom error types for error handling semantics
   - `AuthError`: Fatal authentication failures (no retry)
   - `ConnectionError`: Network issues (retry with backoff)
@@ -94,7 +99,7 @@ The main loop in `envisaMon.go:54-68` continuously calls `Connect()` and `ReadLo
 The TPI protocol requires reading a "Login:" prompt, responding with password followed by `\r` (carriage return), then validating the response is "OK". Auth timeout is set to 10 seconds during this phase, then cleared for ongoing message reading.
 
 **Testing Pattern:**
-Tests use table-driven approach and mock TCP connections via `testutil_test.go`. The `dialTimeout` variable in `client.go` is reassigned during tests to inject mock connections. Tests verify the exact protocol sequence including login prompts, authentication responses, and message handling.
+Tests use table-driven approach and mock TCP connections via `testutil_test.go`. The `dialTimeout` variable in `client.go` is reassigned during tests to inject mock connections. Tests verify the exact protocol sequence including login prompts, authentication responses, and message handling. `mockConn` ignores deadlines, so timing tests use `net.Pipe()` with shortened `pollIdle` and `pollTimeout`.
 
 ## Workflow
 - Do not use git commands (commits, etc.) unless explicitly requested

@@ -2,9 +2,12 @@ package tpi
 
 import (
 	"bufio"
+	"bytes"
+	"errors"
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"time"
 )
@@ -14,10 +17,23 @@ const (
 	maxDelay     = 60 * time.Second
 	multiplier   = 2.0
 	authTimeout  = 10 * time.Second
+	writeTimeout = 5 * time.Second
+
+	// The only command the client sends after login
+	pollCommand = "^00,$\r\n"
+
+	// Host Information Report, only sent by UNO-family firmware
+	hostReportPrefix = "%05,"
 )
 
 // dialTimeout is a variable to allow mocking in tests
 var dialTimeout = net.DialTimeout
+
+// pollIdle and pollTimeout are variables to allow shorter timings in tests
+var (
+	pollIdle    = 20 * time.Second // Silence before polling the panel
+	pollTimeout = 15 * time.Second // Time allowed for the panel to reply
+)
 
 // Client manages the TPI connection and message handling
 type Client struct {
@@ -32,6 +48,7 @@ type Client struct {
 	deduplicateLimit int // -1: disabled, 0: infinite, >0: ignore n duplicates
 	deduplicateCount int
 	lastMessage      string
+	hostReported     bool // true once the session's first host report is seen
 }
 
 // NewClient creates a new TPI client
@@ -133,10 +150,29 @@ func (c *Client) ReadLoop() error {
 		}
 	}(c.conn)
 
-	scanner := bufio.NewScanner(c.reader)
+	conn := c.conn
+	c.hostReported = false
 
-	for scanner.Scan() {
+	// Poll when the panel goes quiet. Panels with regular traffic are never polled.
+	pollTimer := time.AfterFunc(pollIdle, func() { c.sendCommand(conn, pollCommand) })
+	defer pollTimer.Stop()
+
+	scanner := bufio.NewScanner(c.reader)
+	scanner.Split(scanFrames)
+
+	for {
+		if err := conn.SetReadDeadline(time.Now().Add(pollIdle + pollTimeout)); err != nil {
+			return &ConnectionError{Message: "failed to set read deadline", Err: err}
+		}
+		if !scanner.Scan() {
+			break
+		}
+		pollTimer.Reset(pollIdle)
+
 		line := scanner.Text()
+		if !c.filterFrame(line) {
+			continue
+		}
 
 		if line == c.lastMessage {
 			if c.deduplicateLimit == 0 {
@@ -163,6 +199,10 @@ func (c *Client) ReadLoop() error {
 
 	// Check for errors
 	if err := scanner.Err(); err != nil {
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			c.appLogger.Printf("WARN: No data from panel for %v", pollIdle+pollTimeout)
+			return &TimeoutError{Operation: "read", Err: err}
+		}
 		c.appLogger.Printf("WARN: Read error: %v", err)
 		return &ConnectionError{Message: "read error", Err: err}
 	}
@@ -170,6 +210,66 @@ func (c *Client) ReadLoop() error {
 	// EOF reached (connection closed)
 	c.appLogger.Println("WARN: Connection closed by remote")
 	return &ConnectionError{Message: "connection closed", Err: nil}
+}
+
+// scanFrames is a bufio.SplitFunc for the TPI stream. A frame ends at the '$'
+// sentinel, which is kept, or at a newline, which is stripped. The UNO spec does
+// not guarantee a line ending after '%' packets, and UNO firmware 1.01.197 ends
+// them with "\n\r", so the leading CR is skipped.
+func scanFrames(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	start := 0
+	for start < len(data) && (data[start] == '\r' || data[start] == '\n') {
+		start++
+	}
+
+	if i := bytes.IndexAny(data[start:], "$\n"); i >= 0 {
+		end := start + i
+		if data[end] == '$' {
+			return end + 1, data[start : end+1], nil
+		}
+		return end + 1, bytes.TrimRight(data[start:end], "\r"), nil
+	}
+
+	if atEOF && start < len(data) {
+		return len(data), bytes.TrimRight(data[start:], "\r"), nil
+	}
+
+	return start, nil, nil
+}
+
+// filterFrame handles frames caused by the client's own polls and reports
+// whether the frame should be forwarded
+func (c *Client) filterFrame(line string) bool {
+	if strings.HasPrefix(line, "^") {
+		_, code, _ := strings.Cut(strings.TrimSuffix(line, "$"), ",")
+		if strings.Trim(code, "0") != "" {
+			c.appLogger.Printf("WARN: TPI command rejected: %s", line)
+		}
+		return false
+	}
+
+	if strings.HasPrefix(line, hostReportPrefix) {
+		// The spec has polls repeat the report, so only the first in a session is forwarded
+		if c.hostReported {
+			return false
+		}
+		c.hostReported = true
+		c.appLogger.Printf("INFO: UNO-family panel detected: %s", line)
+	}
+
+	return true
+}
+
+// sendCommand writes a command in a single call so it stays in one IP packet.
+// A failed write is only logged, the read deadline ends the session if it is dead.
+func (c *Client) sendCommand(conn net.Conn, command string) {
+	if err := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+		c.appLogger.Printf("WARN: Failed to set write deadline: %v", err)
+		return
+	}
+	if _, err := conn.Write([]byte(command)); err != nil {
+		c.appLogger.Printf("WARN: Failed to send command %q: %v", command, err)
+	}
 }
 
 // Close gracefully closes the connection

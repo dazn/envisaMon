@@ -2,10 +2,20 @@
 
 EnvisaMon is a lightweight Go application designed to connect to an EnvisaLink™ module via the Third Party Interface (TPI). It monitors the connection, handles authentication, and logs all TPI messages to disk for analysis or audit. It also supports remote reporting, allowing you to forward events to a REST API for centralized monitoring or integration.
 
+## Supported Devices
+
+- **EnvisaLink 4 with Ademco/Honeywell firmware.**
+- **UNO-family panels:** EyezOn UNO, SOLO, and the EnvisaLink 4MAX and DUO in standalone mode.
+
+No configuration is needed to select the device. UNO-family firmware sends a `%05` Host Information Report after login, and EnvisaMon uses that to detect the panel.
+
+EnvisaMon never sends arm, disarm, panic or PGM commands. The only command it sends after login is the poll described below.
+
 ## Features
 
 - **TPI Connection:** Connects to the EnvisaLink TPI over TCP/IP (default port 4025).
 - **Auto-Reconnect:** Automatically attempts to reconnect with exponential backoff if the connection is lost.
+- **Connection Checks:** Polls the panel (`^00`) after 20 seconds of silence and reconnects if nothing arrives within a further 15 seconds. Panels with regular traffic, such as an Ademco EnvisaLink sending keypad updates, are not polled.
 - **Dual Logging:** Separates raw TPI protocol messages from application operational logs.
 - **Log Rotation:** Automatically manages log file sizes and retention.
 - **Remote Reporting:** Securely forwards events to a REST API via HTTPS with API key authentication.
@@ -95,7 +105,7 @@ The reporting API expects a JSON object with the following structure:
 The application maintains two distinct log files in the `./logs` directory. These files are automatically rotated and compressed.
 
 ### 1. TPI Messages Log (`logs/tpi-messages.log`)
-Contains the raw, unprocessed ASCII data received from the EnvisaLink module.
+Contains the raw, unprocessed ASCII data received from the EnvisaLink module. Replies to EnvisaMon's polls are left out: `^` acknowledgements, and any `%05` report after the first in a session. Rejected commands are recorded in the application log.
 *   **Format:** Raw message text only (no added timestamps or prefixes).
 *   **Rotation:** Rotates when reaching 5MB. Retains the 3 most recent log files.
 
@@ -106,14 +116,30 @@ Contains operational events such as connection attempts, authentication status, 
 
 ## Message Structure
 
-For detailed information on the structure and meaning of the raw TPI messages logged in `logs/tpi-messages.log`, please refer to the [EnvisaLink TPI Programmer's Document](EnvisaLinkTPI-ADEMCO-1-03.md).
+For detailed information on the structure and meaning of the raw TPI messages logged in `logs/tpi-messages.log`, please refer to the TPI Programmer's Document for your device:
 
-Common TPI messages include:
-*   `%CC,DATA$`: Commands/Data from EnvisaLink.
-*   `^CC,DATA$`: Commands sent to EnvisaLink (or responses to commands).
+*   [Ademco/Honeywell](docs/EnvisaLinkTPI-ADEMCO-1-03.md)
+*   [UNO family](docs/EnvisaLinkTPI-UNO-1-08.md)
 
-Where `CC` is the command code. For example:
-*   `00`: Virtual Keypad Update
+TPI messages have the format `%CC,DATA$`, where `CC` is the command code. For example:
+*   `00`: Virtual Keypad Update (Ademco only)
 *   `01`: Zone State Change
 *   `02`: Partition State Change
 *   `03`: Realtime CID Event
+*   `05`: Host Information Report (UNO family only)
+
+### Decoding Messages From Both Panel Types
+
+The JSON payload does not say which panel type sent a message, and some codes mean different things on each. A receiver must select its decoding by panel. A UNO-family panel's `%05` message names the device (`UNO`, `DUO`, `EVL` or `SOLO`) and is forwarded once per session, but it is not the first message: a UNO sends `%01`, `%02` and `%04` before it at login. A receiver must not decode a session's first `%02` until it knows the panel type. A session with no `%05` is Ademco.
+
+Partition states in `%02` differ as follows:
+
+| Code | Ademco | UNO family |
+| :--- | :--- | :--- |
+| `06` | Armed Instant (Zero Entry Delay - Stay) | Not used |
+| `07` | Exit Delay | Not used |
+| `08` | **Partition in Alarm** | Exit Delay |
+| `09` | Alarm Has Occurred (Alarm in Memory) | Armed Zero Entry Delay - Away |
+| `0C` | Not defined | Entry Delay |
+| `10` | Armed Maximum (Zero Entry Delay - Away) | Not defined |
+| `11` | Not defined | **Partition in Alarm** |
